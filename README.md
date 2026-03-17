@@ -3,6 +3,8 @@
 > 一个探索逻辑与影像边界的创意编程实验展示平台。
 > Exploration of visual boundaries through creative coding and generative art.
 
+![项目演示](docs/assets/demo.gif)
+
 ## 🌟 项目简介
 
 本项目是一个基于 Web 技术的动态视觉实验室，旨在展示各种前沿的图形特效、交互设计和 AI 视觉应用。它结合了 WebGL Shader、Three.js 3D 渲染、p5.js 生成艺术以及 AI 姿态识别等技术。
