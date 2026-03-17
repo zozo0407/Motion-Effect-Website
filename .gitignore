@@ -4,3 +4,5 @@
 .trae/
 .dbg/
 *.log
+.env
+.env.*
