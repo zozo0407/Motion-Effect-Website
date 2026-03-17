@@ -1,0 +1,117 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Demo 1 - Neon Field (Shader)</title>
+    <style>
+        body { margin: 0; overflow: hidden; background-color: #000; }
+    </style>
+    <!-- Import Maps Polyfill -->
+    <script async src="https://unpkg.com/es-module-shims@1.8.0/dist/es-module-shims.js"></script>
+    <script type="importmap">
+        {
+            "imports": {
+                "three": "https://unpkg.com/three@0.160.0/build/three.module.js",
+                "three/addons/": "https://unpkg.com/three@0.160.0/examples/jsm/"
+            }
+        }
+    </script>
+</head>
+<body>
+    <script type="module">
+        import { UnifiedRenderer } from '../js/UnifiedRenderer.js';
+
+        // Shader Code (Shadertoy style adaptation)
+        const fragmentShader = `
+            uniform vec2 uResolution;
+            uniform float uTime;
+            uniform float uSpeed;
+            uniform float uScale;
+            uniform float uHue;
+            varying vec2 vUv;
+
+            // Simple hash function
+            float hash(vec2 p){
+                p = vec2(dot(p,vec2(127.1,311.7)), dot(p,vec2(269.5,183.3)));
+                return -1.0 + 2.0*fract(sin(p)*43758.5453123);
+            }
+            
+            // 2D Noise
+            float noise(vec2 p){
+                vec2 i = floor(p);
+                vec2 f = fract(p);
+                float a = hash(i);
+                float b = hash(i+vec2(1.0,0.0));
+                float c = hash(i+vec2(0.0,1.0));
+                float d = hash(i+vec2(1.0,1.0));
+                vec2 u = f*f*(3.0-2.0*f);
+                return mix(a,b,u.x)+ (c-a)*u.y*(1.0-u.x) + (d-b)*u.x*u.y;
+            }
+
+            void main(){
+                vec2 uv = vUv;
+                // Aspect Ratio Correction
+                vec2 p = (uv - 0.5) * 2.0;
+                p.x *= uResolution.x / uResolution.y;
+                
+                p *= uScale;
+                
+                float t = uTime * uSpeed;
+                float n = noise(p + vec2(t*0.25, t*0.2));
+                
+                // Pattern
+                float rings = sin(length(p)*4.0 - t*2.0 + n*2.0);
+                float glow = smoothstep(0.2, 0.95, rings);
+                
+                // Color
+                vec3 baseColor = vec3(0.5, 0.8, 1.0); // Blueish
+                // Hue shift logic (simplified)
+                vec3 col = baseColor * (0.5 + 0.5 * cos(uTime + uv.xyx + vec3(0,2,4))); 
+                
+                col = mix(vec3(0.0), col, glow);
+                col = col * (0.8 + 0.5*glow); // Brightness
+                
+                gl_FragColor = vec4(col, 1.0);
+            }
+        `;
+
+        // Initialize Renderer
+        new UnifiedRenderer({
+            type: 'shader', // Explicitly state this is a shader demo
+            fragmentShader: fragmentShader,
+            
+            // Initial Parameters
+            params: {
+                uSpeed: 1.0,
+                uScale: 1.2,
+                uHue: 0.0
+            },
+            
+            // Init callback (optional for shaders, but used for UI)
+            init: (renderer) => {
+                const uiConfig = [
+                    { name: '速度 / Speed', value: 1.0, min: 0.1, max: 5.0, step: 0.1, bind: 'uSpeed' },
+                    { name: '缩放 / Scale', value: 1.2, min: 0.5, max: 5.0, step: 0.1, bind: 'uScale' },
+                    { name: '截图 / Screenshot', type: 'button', bind: 'capture' }
+                    // { name: '色相 / Hue', value: 0.0, min: 0.0, max: 1.0, step: 0.01, bind: 'uHue' }
+                ];
+                
+                // Add Capture Action
+                renderer.params.capture = () => {
+                    const dataURL = renderer.capture();
+                    if (dataURL) {
+                        // Create a temporary link to download
+                        const a = document.createElement('a');
+                        a.href = dataURL;
+                        a.download = `demo1-capture-${Date.now()}.png`;
+                        a.click();
+                    }
+                };
+                
+                renderer.setUI(uiConfig);
+            }
+        });
+    </script>
+</body>
+</html>

@@ -1,0 +1,91 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Unified Template Demo</title>
+    <style>
+        body { margin: 0; overflow: hidden; background-color: #000; }
+    </style>
+    <!-- Import Maps Polyfill -->
+    <script async src="https://unpkg.com/es-module-shims@1.8.0/dist/es-module-shims.js"></script>
+    <script type="importmap">
+        {
+            "imports": {
+                "three": "https://unpkg.com/three@0.160.0/build/three.module.js",
+                "three/addons/": "https://unpkg.com/three@0.160.0/examples/jsm/"
+            }
+        }
+    </script>
+</head>
+<body>
+    <script type="module">
+        import * as THREE from 'three';
+        import { UnifiedRenderer } from '../js/UnifiedRenderer.js';
+
+        // 1. Initialize with specific logic
+        new UnifiedRenderer({
+            type: 'three',
+            
+            // Initial Parameters (Will be bound to UI)
+            params: {
+                color: '#00ff88',
+                speed: 1.0,
+                scale: 1.0
+            },
+
+            // Initialization (Setup scene, objects)
+            init: (sketch) => {
+                // Access core components via 'sketch'
+                const { scene, params } = sketch;
+
+                // Debug log
+                console.log('Template Demo Init', sketch);
+
+                // Add Lights
+                const light = new THREE.DirectionalLight(0xffffff, 1);
+                light.position.set(1, 1, 1);
+                scene.add(light);
+                scene.add(new THREE.AmbientLight(0x404040));
+
+                // Add Object
+                const geometry = new THREE.BoxGeometry(1, 1, 1);
+                const material = new THREE.MeshStandardMaterial({ 
+                    color: new THREE.Color(params.color),
+                    roughness: 0.4,
+                    metalness: 0.6
+                });
+                sketch.cube = new THREE.Mesh(geometry, material);
+                scene.add(sketch.cube);
+
+                // Define UI (Standardized Config)
+                sketch.setUI([
+                    { name: 'Cube Color', value: params.color, type: 'color', bind: 'color' },
+                    { name: 'Rotation Speed', value: params.speed, min: 0, max: 5, step: 0.1, bind: 'speed' },
+                    { name: 'Scale', value: params.scale, min: 0.5, max: 3, step: 0.1, bind: 'scale' }
+                ]);
+            },
+
+            // Animation Loop
+            update: ({ deltaTime }, sketch) => {
+                const { cube, params } = sketch;
+                if (cube) {
+                    cube.rotation.x += deltaTime * params.speed;
+                    cube.rotation.y += deltaTime * params.speed * 0.5;
+                }
+            },
+
+            // Handle Parameter Changes
+            onParamChange: (key, value, sketch) => {
+                const { cube } = sketch;
+                if (key === 'color' && cube) {
+                    cube.material.color.set(value);
+                }
+                if (key === 'scale' && cube) {
+                    cube.scale.setScalar(value);
+                }
+            }
+        });
+    </script>
+</body>
+</html>

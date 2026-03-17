@@ -1,0 +1,503 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Demo 10 - BabyTrack Motion</title>
+    <style>
+        body { margin: 0; overflow: hidden; background-color: #000; font-family: monospace; }
+        #canvas-container { position: absolute; top: 0; left: 0; width: 100%; height: 100%; }
+        canvas { display: block; width: 100%; height: 100%; object-fit: contain; }
+        
+        /* Hidden video element for processing */
+        #input-video { display: none; }
+    </style>
+</head>
+<body>
+    <div id="canvas-container">
+        <canvas id="main-canvas"></canvas>
+    </div>
+    
+    <!-- Video Source -->
+    <video id="input-video" playsinline loop muted crossorigin="anonymous"></video>
+
+    <script type="module">
+        import { UnifiedRenderer } from '../js/UnifiedRenderer.js';
+
+        // --- Configuration ---
+        const CONFIG = {
+            sensitivity: 20,    // Pixel difference threshold (0-255)
+            minBlobSize: 100,   // Minimum pixels to count as a blob
+            gridSize: 10,       // Downsampling grid for detection (Performance)
+            learningRate: 0.1,  // Background adaptation rate
+            style: 'Basic',     // Basic, Area, Filter, Invert
+            showTrails: true,
+            trailLength: 15,
+            color: '#ffffff'    // Main Theme Color (Default White for Modern look)
+        };
+
+        // --- Globals ---
+        const video = document.getElementById('input-video');
+        const canvas = document.getElementById('main-canvas');
+        const ctx = canvas.getContext('2d', { willReadFrequently: true });
+        
+        // Offscreen Processing
+        const procCanvas = document.createElement('canvas');
+        const procCtx = procCanvas.getContext('2d', { willReadFrequently: true });
+        
+        let width = 640;
+        let height = 360;
+        let previousFrameData = null;
+        let blobs = []; // { id, x, y, w, h, age, trail: [] }
+        let nextBlobId = 1;
+        
+        let isVideoReady = false;
+        let animationId = null;
+
+        // --- UI Communication ---
+        const UI_CONFIG = [
+            { name: '灵敏度', value: 20, min: 5, max: 100, bind: 'sensitivity' },
+            { name: '最小斑点', value: 100, min: 10, max: 500, bind: 'minBlobSize' },
+            { name: '视觉风格', value: 0, type: 'select', options: ['Basic', 'Area', 'Filter', 'Invert'], bind: 'style' },
+            { name: '显示拖尾', value: true, type: 'checkbox', bind: 'showTrails' },
+            { name: '主题色', value: '#ffffff', type: 'color', bind: 'color' }
+        ];
+
+        const SOURCE_OPTIONS = [
+            { name: '示例视频 1', value: 'v1', type: 'video', path: '../sample/sample1.mp4' },
+            { name: '示例视频 2', value: 'v2', type: 'video', path: '../sample/sample2.mp4' },
+            { name: '🔴 实时摄像头', value: 'camera', type: 'camera' }
+        ];
+
+        new UnifiedRenderer({
+            type: 'custom',
+            init: (renderer) => {
+                // Initialize
+                loadSource({ type: 'video', path: '../sample/sample1.mp4' });
+                resize();
+                loop();
+
+                // Setup UI
+                renderer.setUI(UI_CONFIG);
+                
+                // Send Source Options (Custom extension for demo10)
+                if (window.parent) {
+                    window.parent.postMessage({
+                        type: 'UI_CONFIG',
+                        config: UI_CONFIG,
+                        sources: SOURCE_OPTIONS
+                    }, '*');
+                }
+
+                // Handle Params
+                renderer.onParamChange = (key, value) => {
+                    if (key === 'sensitivity') CONFIG.sensitivity = value;
+                    if (key === 'minBlobSize') CONFIG.minBlobSize = value;
+                    if (key === 'showTrails') CONFIG.showTrails = value;
+                    if (key === 'color') CONFIG.color = value;
+                    if (key === 'style') {
+                        const styles = ['Basic', 'Area', 'Filter', 'Invert'];
+                        if (typeof value === 'number') CONFIG.style = styles[value];
+                        else CONFIG.style = value;
+                    }
+                    // Handle Source Change via "source" key (sent by index.html dropdown)
+                    if (key === 'source') {
+                        const src = SOURCE_OPTIONS.find(s => s.value === value);
+                        if (src) loadSource(src);
+                    }
+                };
+
+                // Handle Resize
+                renderer.onResize = (w, h) => {
+                    resize();
+                };
+
+                // Handle Cleanup
+                renderer.onDispose = () => {
+                    if (animationId) cancelAnimationFrame(animationId);
+                    if (video) {
+                        video.pause();
+                        video.src = "";
+                        if (video.srcObject) {
+                            video.srcObject.getTracks().forEach(track => track.stop());
+                        }
+                    }
+                };
+
+                // Handle Custom Messages (Source Loading)
+                // We hook into the existing message listener of UnifiedRenderer via onParamChange? 
+                // No, UnifiedRenderer filters messages. 
+                // We might need to listen to 'message' manually for LOAD_SOURCE if UnifiedRenderer doesn't support it.
+                // But UnifiedRenderer removes 'message' listener on dispose.
+                // Let's add a manual listener and remove it on dispose.
+                const messageHandler = (event) => {
+                    const data = event.data;
+                    if (!data) return;
+                    if (data.type === 'LOAD_SOURCE') {
+                        loadSource(data.source);
+                    }
+                    if (data.type === 'SAVE_IMAGE') {
+                         const link = document.createElement('a');
+                         link.download = 'baby-track.png';
+                         link.href = canvas.toDataURL('image/png');
+                         link.click();
+                    }
+                };
+                window.addEventListener('message', messageHandler);
+                
+                // Chained dispose
+                const originalDispose = renderer.onDispose;
+                renderer.onDispose = () => {
+                    if (originalDispose) originalDispose();
+                    window.removeEventListener('message', messageHandler);
+                };
+            }
+        });
+
+        function resize() {
+            canvas.width = window.innerWidth;
+            canvas.height = window.innerHeight;
+            // Processing resolution is fixed/scaled for performance, but display is full
+        }
+
+        function loadSource(source) {
+            isVideoReady = false;
+            previousFrameData = null;
+            blobs = [];
+            
+            if (source.type === 'video') {
+                video.src = source.path;
+                video.play().then(() => {
+                    isVideoReady = true;
+                }).catch(e => console.error(e));
+            } else if (source.type === 'camera') {
+                navigator.mediaDevices.getUserMedia({ video: true }).then(stream => {
+                    video.srcObject = stream;
+                    video.play();
+                    isVideoReady = true;
+                });
+            } else if (source.type === 'image') {
+                video.src = "";
+            }
+        }
+
+        // --- Core Tracking Engine ---
+        function processFrame() {
+            if (!isVideoReady || video.videoWidth === 0) return;
+
+            // Set internal resolution
+            if (width !== video.videoWidth / 2) { // Downscale 50% for speed
+                width = 320; // Fixed low res for processing
+                height = 320 * (video.videoHeight / video.videoWidth);
+                procCanvas.width = width;
+                procCanvas.height = height;
+            }
+
+            // Draw current frame
+            procCtx.drawImage(video, 0, 0, width, height);
+            
+            const frame = procCtx.getImageData(0, 0, width, height);
+            const data = frame.data;
+            const len = data.length;
+
+            if (!previousFrameData) {
+                previousFrameData = new Uint8ClampedArray(data);
+                return;
+            }
+
+            // 1. Difference & Threshold
+            // We'll build a binary map: 1 = moving, 0 = static
+            const diffMap = new Uint8Array(width * height);
+            const threshold = CONFIG.sensitivity;
+            let changesCount = 0;
+
+            for (let i = 0; i < len; i += 4) {
+                // Simple Grayscale Diff
+                // R G B
+                const rDiff = Math.abs(data[i] - previousFrameData[i]);
+                const gDiff = Math.abs(data[i+1] - previousFrameData[i+1]);
+                const bDiff = Math.abs(data[i+2] - previousFrameData[i+2]);
+                
+                const diff = (rDiff + gDiff + bDiff) / 3;
+                
+                if (diff > threshold) {
+                    diffMap[i/4] = 1;
+                    changesCount++;
+                    // Visual Debug: Make moving pixels white, others black
+                    if (CONFIG.style === 'Filter') {
+                        data[i] = 255; data[i+1] = 255; data[i+2] = 255;
+                    }
+                } else {
+                    if (CONFIG.style === 'Filter') {
+                        data[i] = 0; data[i+1] = 0; data[i+2] = 0;
+                    }
+                }
+            }
+            
+            // Update Background (Learning)
+            // Blend current into previous slightly to adapt to lighting changes
+            // Or just direct copy for frame-by-frame diff
+            // Direct copy is better for "Motion", Blending is better for "Background Subtraction"
+            // Let's do direct copy for simplicity of "Movement"
+            previousFrameData.set(data); 
+            // Wait, if we overwrite previous with 'Filter' result (binary), next frame fails.
+            // We need to copy RAW data before modifying it for display.
+            // So let's re-read or just copy buffer before loop.
+            // Optimized: We used 'previousFrameData' in loop. We need to update it with CURRENT RAW data.
+            // But 'data' might have been modified if style is Filter.
+            // So let's capture raw first.
+            procCtx.drawImage(video, 0, 0, width, height); // Redraw raw
+            const rawFrame = procCtx.getImageData(0, 0, width, height);
+            previousFrameData.set(rawFrame.data);
+
+
+            // 2. Blob Clustering (Simple Grid/Distance Merge)
+            // Naive approach: Grid scan
+            const currentBlobs = [];
+            const grid = CONFIG.gridSize; // 10px
+            
+            for (let y = 0; y < height; y += grid) {
+                for (let x = 0; x < width; x += grid) {
+                    // Check density in this cell
+                    let motionPixels = 0;
+                    for (let gy = 0; gy < grid; gy++) {
+                        for (let gx = 0; gx < grid; gx++) {
+                            const idx = ((y + gy) * width + (x + gx));
+                            if (diffMap[idx] === 1) motionPixels++;
+                        }
+                    }
+                    
+                    if (motionPixels > (grid*grid) * 0.2) { // > 20% movement
+                        // Found a hot cell. Add to blobs or merge.
+                        // Simple merge: Find closest existing blob
+                        let merged = false;
+                        for (let b of currentBlobs) {
+                            if (Math.abs(b.x - x) < 40 && Math.abs(b.y - y) < 40) { // Merge distance
+                                // Expand blob
+                                const minX = Math.min(b.x, x);
+                                const minY = Math.min(b.y, y);
+                                const maxX = Math.max(b.x + b.w, x + grid);
+                                const maxY = Math.max(b.y + b.h, y + grid);
+                                b.x = minX; b.y = minY;
+                                b.w = maxX - minX;
+                                b.h = maxY - minY;
+                                merged = true;
+                                break;
+                            }
+                        }
+                        if (!merged) {
+                            currentBlobs.push({ x, y, w: grid, h: grid });
+                        }
+                    }
+                }
+            }
+
+            // 3. Blob Tracking (Match with previous blobs)
+            // Match by distance
+            const trackedBlobs = [];
+            
+            for (let cb of currentBlobs) {
+                // Filter small noise
+                if (cb.w * cb.h < CONFIG.minBlobSize) continue;
+
+                const cx = cb.x + cb.w/2;
+                const cy = cb.y + cb.h/2;
+                
+                let match = null;
+                let minDist = 100; // Tracking radius
+                
+                for (let pb of blobs) {
+                    const pcx = pb.x + pb.w/2;
+                    const pcy = pb.y + pb.h/2;
+                    const dist = Math.hypot(cx - pcx, cy - pcy);
+                    
+                    if (dist < minDist) {
+                        minDist = dist;
+                        match = pb;
+                    }
+                }
+                
+                if (match) {
+                    // Update existing
+                    match.x = cb.x; match.y = cb.y;
+                    match.w = cb.w; match.h = cb.h;
+                    match.age++;
+                    match.lost = 0;
+                    // Add trail
+                    if (CONFIG.showTrails) {
+                        match.trail.push({x: cx, y: cy});
+                        if (match.trail.length > CONFIG.trailLength) match.trail.shift();
+                    }
+                    trackedBlobs.push(match);
+                } else {
+                    // New blob
+                    trackedBlobs.push({
+                        id: nextBlobId++,
+                        x: cb.x, y: cb.y, w: cb.w, h: cb.h,
+                        age: 0, lost: 0,
+                        trail: [{x: cx, y: cy}]
+                    });
+                }
+            }
+            
+            blobs = trackedBlobs;
+        }
+
+        // --- Rendering ---
+        function render() {
+            // Draw Background
+            // Scale to fit window (Contain)
+            const aspect = width / height;
+            const screenAspect = canvas.width / canvas.height;
+            
+            let drawW, drawH, offX, offY;
+            
+            if (screenAspect > aspect) {
+                drawH = canvas.height;
+                drawW = drawH * aspect;
+                offX = (canvas.width - drawW) / 2;
+                offY = 0;
+            } else {
+                drawW = canvas.width;
+                drawH = drawW / aspect;
+                offX = 0;
+                offY = (canvas.height - drawH) / 2;
+            }
+
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+            
+            // Draw Video Feed
+            ctx.save();
+            if (CONFIG.style === 'Filter') {
+                // For Filter, we want to see the binary mask (White on Black)
+                ctx.filter = 'grayscale(100%) contrast(500%) brightness(0.8)';
+            } else if (CONFIG.style === 'Invert') {
+                ctx.filter = 'invert(100%) grayscale(100%)';
+            } else {
+                // Basic / Area: Make it grayscale for the "Modern Black & White" feel
+                ctx.filter = 'grayscale(100%) contrast(1.1)'; 
+            }
+            
+            ctx.drawImage(video, offX, offY, drawW, drawH);
+            
+            // Overlay Grid (Tech feel)
+            if (CONFIG.style !== 'Filter') {
+                ctx.strokeStyle = 'rgba(255, 255, 255, 0.05)';
+                ctx.lineWidth = 0.5;
+                const gridSizeDisplay = 100;
+                ctx.beginPath();
+                // Draw a few grid lines
+                for(let gx=offX; gx<offX+drawW; gx+=gridSizeDisplay) { ctx.moveTo(gx, offY); ctx.lineTo(gx, offY+drawH); }
+                for(let gy=offY; gy<offY+drawH; gy+=gridSizeDisplay) { ctx.moveTo(offX, gy); ctx.lineTo(offX+drawW, gy); }
+                ctx.stroke();
+            }
+            
+            ctx.restore();
+
+            // Draw Blobs
+            ctx.strokeStyle = CONFIG.color;
+            ctx.fillStyle = CONFIG.color;
+            ctx.lineWidth = 1; // Thinner lines
+            ctx.font = '10px monospace'; // Modern monospace font
+            
+            // Scale factor from process res to display res
+            const sx = drawW / width;
+            const sy = drawH / height;
+
+            blobs.forEach(b => {
+                const bx = offX + b.x * sx;
+                const by = offY + b.y * sy;
+                const bw = b.w * sx;
+                const bh = b.h * sy;
+                
+                if (CONFIG.style === 'Area') {
+                    // Modern Area: Thin diagonal hatch or low opacity fill
+                    ctx.save();
+                    ctx.globalAlpha = 0.1;
+                    ctx.fillStyle = CONFIG.color;
+                    ctx.fillRect(bx, by, bw, bh);
+                    ctx.globalAlpha = 0.5;
+                    ctx.strokeRect(bx, by, bw, bh);
+                    ctx.restore();
+                    
+                    // Crosshair
+                    const cx = bx + bw/2;
+                    const cy = by + bh/2;
+                    const size = 10;
+                    ctx.beginPath();
+                    ctx.moveTo(cx - size, cy); ctx.lineTo(cx + size, cy);
+                    ctx.moveTo(cx, cy - size); ctx.lineTo(cx, cy + size);
+                    ctx.stroke();
+
+                } else if (CONFIG.style === 'Basic') {
+                    // Basic: Modern Tech Corners
+                    const corner = 15;
+                    ctx.beginPath();
+                    // TL
+                    ctx.moveTo(bx, by + corner); ctx.lineTo(bx, by); ctx.lineTo(bx + corner, by);
+                    // TR
+                    ctx.moveTo(bx + bw - corner, by); ctx.lineTo(bx + bw, by); ctx.lineTo(bx + bw, by + corner);
+                    // BL
+                    ctx.moveTo(bx, by + bh - corner); ctx.lineTo(bx, by + bh); ctx.lineTo(bx + corner, by + bh);
+                    // BR
+                    ctx.moveTo(bx + bw - corner, by + bh); ctx.lineTo(bx + bw, by + bh); ctx.lineTo(bx + bw, by + bh - corner);
+                    ctx.stroke();
+                    
+                    // Add small dots in corners
+                    ctx.fillStyle = CONFIG.color;
+                    ctx.fillRect(bx - 1, by - 1, 2, 2);
+                    ctx.fillRect(bx + bw - 1, by - 1, 2, 2);
+                    ctx.fillRect(bx - 1, by + bh - 1, 2, 2);
+                    ctx.fillRect(bx + bw - 1, by + bh - 1, 2, 2);
+
+                } else {
+                    // Filter / Invert: Simple Thin Box
+                    ctx.lineWidth = 0.5;
+                    ctx.strokeRect(bx, by, bw, bh);
+                }
+                
+                // Info Tag
+                ctx.save();
+                // Draw a tech-style label
+                // Line to label
+                ctx.beginPath();
+                ctx.moveTo(bx + bw, by);
+                ctx.lineTo(bx + bw + 10, by - 10);
+                ctx.lineTo(bx + bw + 60, by - 10);
+                ctx.strokeStyle = CONFIG.color;
+                ctx.globalAlpha = 0.5;
+                ctx.stroke();
+                
+                // Text
+                ctx.fillStyle = CONFIG.color;
+                ctx.textAlign = 'right';
+                ctx.fillText(`ID.${b.id}`, bx + bw + 58, by - 14);
+                ctx.font = '8px monospace';
+                ctx.globalAlpha = 0.7;
+                ctx.fillText(`[${Math.round(bx)},${Math.round(by)}]`, bx + bw + 58, by - 4);
+                ctx.restore();
+                
+                // Trails
+                if (CONFIG.showTrails && b.trail.length > 1) {
+                    ctx.beginPath();
+                    ctx.strokeStyle = CONFIG.color;
+                    ctx.lineWidth = 0.5; // Very thin trails
+                    ctx.globalAlpha = 0.4;
+                    ctx.moveTo(offX + b.trail[0].x * sx, offY + b.trail[0].y * sy);
+                    for (let i = 1; i < b.trail.length; i++) {
+                        ctx.lineTo(offX + b.trail[i].x * sx, offY + b.trail[i].y * sy);
+                    }
+                    ctx.stroke();
+                    ctx.globalAlpha = 1.0;
+                }
+            });
+        }
+
+        function loop() {
+            processFrame();
+            render();
+            animationId = requestAnimationFrame(loop);
+        }
+    </script>
+</body>
+</html>

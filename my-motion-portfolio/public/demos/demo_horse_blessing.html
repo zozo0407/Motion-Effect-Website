@@ -1,0 +1,954 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Horse Year Blessing - GPU Particles</title>
+    <style>
+        body { margin: 0; overflow: hidden; background-color: #000; }
+        
+        /* Loading Overlay */
+        #loader {
+            position: absolute;
+            top: 0; left: 0; width: 100%; height: 100%;
+            background: #000;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            color: #fff;
+            font-family: 'Courier New', sans-serif;
+            z-index: 9999;
+            transition: opacity 1s ease;
+        }
+
+        /* UI Overlay */
+        #ui-container {
+            position: absolute;
+            bottom: 40px;
+            left: 50%;
+            transform: translateX(-50%);
+            z-index: 100;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            gap: 20px;
+            pointer-events: none; 
+        }
+
+        .blessing-btn {
+            pointer-events: auto;
+            background: linear-gradient(45deg, #ff3333, #ff9933);
+            border: 2px solid rgba(255, 255, 255, 0.5);
+            color: #fff;
+            padding: 15px 40px;
+            border-radius: 50px;
+            font-family: "Microsoft YaHei", sans-serif;
+            font-weight: bold;
+            font-size: 18px;
+            cursor: pointer;
+            text-transform: uppercase;
+            letter-spacing: 2px;
+            box-shadow: 0 0 20px rgba(255, 50, 50, 0.4);
+            transition: all 0.3s cubic-bezier(0.175, 0.885, 0.32, 1.275);
+            text-shadow: 0 2px 4px rgba(0,0,0,0.3);
+        }
+
+        .blessing-btn:hover {
+            transform: scale(1.1) translateY(-2px);
+            box-shadow: 0 0 40px rgba(255, 50, 50, 0.8);
+            filter: brightness(1.2);
+        }
+
+        .blessing-btn:active {
+            transform: scale(0.95);
+        }
+
+        /* Image Popup */
+        #popup-container {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%) scale(0.8);
+            opacity: 0;
+            z-index: 50;
+            transition: all 0.6s cubic-bezier(0.34, 1.56, 0.64, 1);
+            pointer-events: none;
+            max-width: 80%;
+            max-height: 80%;
+            border-radius: 15px;
+            box-shadow: 0 0 50px rgba(0,0,0,0.5);
+            overflow: hidden;
+            border: 2px solid rgba(255,255,255,0.1);
+            background: rgba(0,0,0,0.5);
+            backdrop-filter: blur(10px);
+        }
+
+        #popup-container.visible {
+            opacity: 1;
+            transform: translate(-50%, -50%) scale(1);
+            pointer-events: auto;
+        }
+
+        #popup-img {
+            display: block;
+            max-width: 100%;
+            max-height: 80vh;
+            object-fit: contain;
+        }
+
+        .hidden {
+            opacity: 0;
+            pointer-events: none;
+        }
+    </style>
+    <!-- Import Maps Polyfill -->
+    <script async src="https://unpkg.com/es-module-shims@1.8.0/dist/es-module-shims.js"></script>
+    <script type="importmap">
+        {
+            "imports": {
+                "three": "https://unpkg.com/three@0.160.0/build/three.module.js",
+                "three/addons/": "https://unpkg.com/three@0.160.0/examples/jsm/",
+                "@tweenjs/tween.js": "https://unpkg.com/@tweenjs/tween.js@23.1.1/dist/tween.esm.js"
+            }
+        }
+    </script>
+</head>
+<body>
+    <div id="loader">LOADING HORSE...</div>
+
+    <div id="ui-container">
+        <!-- Button removed as per request -->
+    </div>
+
+    <div id="popup-container">
+        <img id="popup-img" src="../sample/Sample1.jpg" alt="Blessing">
+    </div>
+
+    <script type="module">
+        import * as THREE from 'three';
+        import { UnifiedRenderer } from '../js/UnifiedRenderer.js';
+        import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
+        import { UnrealBloomPass } from "three/addons/postprocessing/UnrealBloomPass.js";
+        import { EffectComposer } from "three/addons/postprocessing/EffectComposer.js";
+        import { RenderPass } from "three/addons/postprocessing/RenderPass.js";
+        import { OrbitControls } from "three/addons/controls/OrbitControls.js";
+        import * as TWEEN from '@tweenjs/tween.js';
+
+        // Global Variables
+        let horseMixer, horseAction;
+        let particleMesh, snowMesh;
+        let skeleton;
+        let controls; // Added controls variable
+        
+        // --- CUSTOM SHADERS (MORPH TARGET VERSION) ---
+        
+        const PARTICLE_VS = `
+            uniform sampler2D uMorphTexture; // VAT Texture: [VertexID, FrameID]
+            uniform vec2 uTexSize; // [VertexCount, FrameCount]
+            uniform float uCurrentFrame;
+            uniform float uNextFrame;
+            uniform float uFrameMix;
+            
+            uniform sampler2D uPosTex; // Original Base Position (Backup)
+            uniform float uUseMorph;
+            uniform vec3 uCenter; 
+            
+            attribute vec3 aBary;
+            attribute vec3 aVIndices; 
+            attribute vec3 aScatter; // Added Scatter Attribute
+            
+            varying vec3 vColor;
+            
+            uniform float uTime;
+            uniform float uExplosion;
+            uniform float uSize;
+            
+            // --- Helper: Fetch Vertex Position from VAT ---
+            vec3 getMorphPosition(float vertexIndex, float frame) {
+                // X = Vertex Index (Normalized)
+                // Y = Frame Index (Normalized)
+                float u = (vertexIndex + 0.5) / uTexSize.x;
+                float v = (frame + 0.5) / uTexSize.y;
+                return texture2D(uMorphTexture, vec2(u, v)).rgb;
+            }
+            
+            vec3 getInterpolatedPos(float vertexIndex) {
+                if (uUseMorph < 0.5) {
+                    // Fallback to base position logic if not morphing (though we baked base into row 0)
+                     return getMorphPosition(vertexIndex, 0.0);
+                }
+                vec3 p1 = getMorphPosition(vertexIndex, uCurrentFrame);
+                vec3 p2 = getMorphPosition(vertexIndex, uNextFrame);
+                return mix(p1, p2, uFrameMix);
+            }
+
+            // --- Noise Function ---
+            vec3 mod289(vec3 x) { return x - floor(x * (1.0 / 289.0)) * 289.0; }
+            vec4 mod289(vec4 x) { return x - floor(x * (1.0 / 289.0)) * 289.0; }
+            vec4 permute(vec4 x) { return mod289(((x*34.0)+1.0)*x); }
+            vec4 taylorInvSqrt(vec4 r) { return 1.79284291400159 - 0.85373472095314 * r; }
+            float snoise(vec3 v) {
+                const vec2  C = vec2(1.0/6.0, 1.0/3.0) ;
+                const vec4  D = vec4(0.0, 0.5, 1.0, 2.0);
+                vec3 i  = floor(v + dot(v, C.yyy) );
+                vec3 x0 = v - i + dot(i, C.xxx) ;
+                vec3 g = step(x0.yzx, x0.xyz);
+                vec3 l = 1.0 - g;
+                vec3 i1 = min( g.xyz, l.zxy );
+                vec3 i2 = max( g.xyz, l.zxy );
+                vec3 x1 = x0 - i1 + C.xxx;
+                vec3 x2 = x0 - i2 + C.yyy;
+                vec3 x3 = x0 - D.yyy;
+                i = mod289(i);
+                vec4 p = permute( permute( permute(
+                            i.z + vec4(0.0, i1.z, i2.z, 1.0 ))
+                        + i.y + vec4(0.0, i1.y, i2.y, 1.0 ))
+                        + i.x + vec4(0.0, i1.x, i2.x, 1.0 ));
+                float n_ = 0.142857142857;
+                vec3  ns = n_ * D.wyz - D.xzx;
+                vec4 j = p - 49.0 * floor(p * ns.z * ns.z);
+                vec4 x_ = floor(j * ns.z);
+                vec4 y_ = floor(j - 7.0 * x_ );
+                vec4 x = x_ *ns.x + ns.yyyy;
+                vec4 y = y_ *ns.x + ns.yyyy;
+                vec4 h = 1.0 - abs(x) - abs(y);
+                vec4 b0 = vec4( x.xy, y.xy );
+                vec4 b1 = vec4( x.zw, y.zw );
+                vec4 s0 = floor(b0)*2.0 + 1.0;
+                vec4 s1 = floor(b1)*2.0 + 1.0;
+                vec4 sh = -step(h, vec4(0.0));
+                vec4 a0 = b0.xzyw + s0.xzyw*sh.xxyy ;
+                vec4 a1 = b1.xzyw + s1.xzyw*sh.zzww ;
+                vec3 p0 = vec3(a0.xy,h.x);
+                vec3 p1 = vec3(a0.zw,h.y);
+                vec3 p2 = vec3(a1.xy,h.z);
+                vec3 p3 = vec3(a1.zw,h.w);
+                vec4 norm = taylorInvSqrt(vec4(dot(p0,p0), dot(p1,p1), dot(p2, p2), dot(p3,p3)));
+                p0 *= norm.x;
+                p1 *= norm.y;
+                p2 *= norm.z;
+                p3 *= norm.w;
+                vec4 m = max(0.6 - vec4(dot(x0,x0), dot(x1,x1), dot(x2,x2), dot(x3,x3)), 0.0);
+                m = m * m;
+                return 42.0 * dot( m*m, vec4( dot(p0,x0), dot(p1,x1),
+                                            dot(p2,x2), dot(p3,x3) ) );
+            }
+
+            void main() {
+                // 1. Fetch Morph Data for 3 Vertices
+                vec3 p0 = getInterpolatedPos(aVIndices.x);
+                vec3 p1 = getInterpolatedPos(aVIndices.y);
+                vec3 p2 = getInterpolatedPos(aVIndices.z);
+                
+                // 2. Interpolate using Barycentric Coords
+                vec3 finalPos = p0 * aBary.x + p1 * aBary.y + p2 * aBary.z;
+                
+                // 3. Explosion Logic (Unordered Sphere Distribution like Christmas Tree)
+                // Rotate scatter positions around Y axis based on time
+                float angle = uTime * 0.2; // Slow rotation speed
+                mat3 rotY = mat3(
+                    cos(angle), 0.0, sin(angle),
+                    0.0, 1.0, 0.0,
+                    -sin(angle), 0.0, cos(angle)
+                );
+                vec3 rotatedScatter = rotY * aScatter;
+                
+                // mix between horse position and a pre-calculated random scatter sphere position
+                vec3 targetPos = uCenter + rotatedScatter;
+                finalPos = mix(finalPos, targetPos, uExplosion);
+                
+                vec4 mvPosition = modelViewMatrix * vec4( finalPos, 1.0 );
+                gl_Position = projectionMatrix * mvPosition;
+                
+                gl_PointSize = uSize * ( 100.0 / - mvPosition.z );
+                
+                // Color Logic
+                vec3 c1 = vec3(0.0, 0.5, 1.0); 
+                vec3 c2 = vec3(1.0, 0.2, 0.1); 
+                
+                // Remove center artifacts (0,0,0) usually caused by unmapped vertices or texture defaults
+                if (length(finalPos) < 0.1) {
+                    gl_PointSize = 0.0;
+                }
+                
+                float mixVal = smoothstep(-5.0, 10.0, finalPos.y);
+                vColor = mix(c1, c2, mixVal);
+                vColor = mix(vColor, vec3(1.0, 1.0, 0.8), uExplosion); 
+            }
+        `;
+
+        const PARTICLE_FS = `
+            varying vec3 vColor;
+            
+            void main() {
+                vec2 coord = gl_PointCoord - vec2(0.5);
+                float dist = length(coord);
+                if (dist > 0.5) discard;
+                
+                float alpha = 1.0 - smoothstep(0.3, 0.5, dist);
+                gl_FragColor = vec4(vColor, alpha);
+            }
+        `;
+
+        const SNOW_VS = `
+            uniform float uTime;
+            attribute float aScale;
+            varying float vAlpha;
+            
+            void main() {
+                vec3 pos = position;
+                // Fall down
+                pos.y = mod(pos.y - uTime * 2.0, 50.0) - 10.0;
+                // Wobble
+                pos.x += sin(uTime + pos.y * 0.1) * 0.5;
+                pos.z += cos(uTime + pos.x * 0.1) * 0.5;
+                
+                vec4 mvPosition = modelViewMatrix * vec4( pos, 1.0 );
+                gl_Position = projectionMatrix * mvPosition;
+                // Increased size multiplier from 20.0 to 100.0 (5x)
+                gl_PointSize = aScale * ( 100.0 / - mvPosition.z );
+                vAlpha = 0.5 + 0.5 * sin(uTime + pos.x);
+            }
+        `;
+        
+        const SNOW_FS = `
+            varying float vAlpha;
+            void main() {
+                vec2 coord = gl_PointCoord - vec2(0.5);
+                if(length(coord) > 0.5) discard;
+                gl_FragColor = vec4(1.0, 1.0, 1.0, vAlpha * 0.5);
+            }
+        `;
+
+        new UnifiedRenderer({
+            type: 'three',
+            
+            params: {
+                speed: 1.0,
+                explosion: 0.0,
+                pointSize: 2.0,
+                bloomStrength: 0.6, // Reduced to 0.5x (from 1.2)
+                bloomRadius: 0.5,
+                bgColor: '#001e36',
+                targetColor: '#8a0a0a' 
+            },
+
+            init: (sketch) => {
+                const { scene, camera, renderer, params } = sketch;
+
+                camera.position.set(0, 20, 50);
+                camera.lookAt(0, 0, 0);
+
+                // --- Orbit Controls ---
+                controls = new OrbitControls(camera, renderer.domElement);
+                controls.enableDamping = true;
+                controls.dampingFactor = 0.05;
+                controls.screenSpacePanning = false;
+                controls.minDistance = 5;
+                controls.maxDistance = 500;
+                controls.target.set(0, 0, 0);
+
+                // Stop automatic camera animation if user interacts
+                controls.addEventListener('start', () => {
+                    if (sketch.cameraTween) sketch.cameraTween.stop();
+                    sketch.cameraAutoMode = false;
+                });
+
+                const ambientLight = new THREE.AmbientLight(0xffffff, 0.5);
+                scene.add(ambientLight);
+                const dirLight = new THREE.DirectionalLight(0xffffff, 2.0);
+                dirLight.position.set(5, 10, 7);
+                scene.add(dirLight);
+
+                scene.background = new THREE.Color(params.bgColor);
+                scene.fog = new THREE.FogExp2(params.bgColor, 0.015);
+
+                const loader = new GLTFLoader();
+                loader.load('https://raw.githubusercontent.com/mrdoob/three.js/master/examples/models/gltf/Horse.glb', (gltf) => {
+                    let model = null;
+                    
+                    console.log("GLTF Loaded. Scene Graph:");
+                    // DEBUG: Log first child
+                    if (gltf.scene.children.length > 0) {
+                        const first = gltf.scene.children[0];
+                        console.log("First Child:", first.name, first.type, first);
+                        if (first.isMesh) {
+                            console.log("First child is Mesh. Attributes:", first.geometry.attributes);
+                            model = first; // FORCE USE FIRST CHILD for Horse.glb as it is known to be the mesh
+                        }
+                    }
+
+                    gltf.scene.traverse((child) => {
+                        console.log(child.name, child.type);
+                        // Fallback: Check for mesh with skinning attributes even if isSkinnedMesh is false
+                        if (!model) {
+                             if (child.isSkinnedMesh) {
+                                 model = child;
+                                 console.log("Found SkinnedMesh via isSkinnedMesh:", child.name);
+                             } else if (child.isMesh && child.geometry && (child.geometry.attributes.skinWeight || child.name === 'Horse')) {
+                                 // Horse.glb specific: The mesh is named "Horse"
+                                 model = child;
+                                 console.log("Found Mesh via attributes/name:", child.name);
+                             }
+                        }
+                    });
+
+                    if (!model) {
+                        console.error("No SkinnedMesh found in GLTF! Full hierarchy logged above.");
+                        // Dump hierarchy to screen for debugging
+                        let msg = "ERROR: NO MESH FOUND.<br>Hierarchy:<br>";
+                        gltf.scene.traverse(c => msg += `${c.name} (${c.type})<br>`);
+                        document.getElementById('loader').innerHTML = msg;
+                        return;
+                    }
+
+                    // model.scale.set(0.15, 0.15, 0.15); // Scale logic needs to be applied to the PARENT or we handle it in camera/particle size
+                    // Since we are extracting world positions in shader via bone texture which is relative to the mesh...
+                    // Actually, let's keep the scene graph structure intact for the skeleton to work properly.
+                    scene.add(gltf.scene);
+                    gltf.scene.scale.set(0.15, 0.15, 0.15);
+                    gltf.scene.position.y = -5; // Center it a bit better
+
+                    // Hide original mesh
+                    model.material.transparent = true;
+                    model.material.opacity = 0;
+                    model.material.depthWrite = false;
+                    
+                horseMixer = new THREE.AnimationMixer(gltf.scene);
+                // horseAction = horseMixer.clipAction(gltf.animations[0]);
+                // horseAction.play();
+                // We do NOT play the animation mixer for the mesh itself, because we are handling it manually via VAT in shader.
+                // However, we still need to know how many frames/morphs exist.
+                // Actually Horse.glb animations drive the morph weights.
+                // But we are ignoring the weights and just cycling through frames in shader.
+                // So we don't need the mixer for the mesh.
+                
+                // skeleton = model.skeleton; // No skeleton anymore
+
+                initParticles(model, sketch);
+                    initSnow(scene);
+
+                    document.getElementById('loader').classList.add('hidden');
+                    startIntroAnimation(sketch);
+                });
+
+                // --- Post Processing ---
+                const composer = new EffectComposer(renderer);
+                composer.addPass(new RenderPass(scene, camera));
+                
+                // Bloom
+                const bloomPass = new UnrealBloomPass(new THREE.Vector2(window.innerWidth, window.innerHeight), 1.5, 0.4, 0.85);
+                bloomPass.strength = params.bloomStrength;
+                bloomPass.radius = params.bloomRadius;
+                // Exclude the card from bloom?
+                // UnrealBloomPass applies to everything globally by threshold.
+                // We can increase threshold to avoid blooming non-bright objects,
+                // OR we can make the card material darker so it doesn't trigger bloom.
+                // But the card texture might be bright.
+                // Best way: Use layers or selective bloom (complex).
+                // Simpler way: Darken the card material color?
+                // Or: Adjust threshold. Current threshold is 0.85.
+                // If the image has white pixels (1.0), it will bloom.
+                // Let's darken the card slightly to reduce bloom intensity on it.
+                // Set color to grey.
+                // Or set toneMappingExposure?
+                
+                // Let's try darkening the card material color.
+                
+                composer.addPass(bloomPass);
+
+                // Afterimage (Trails) - High Performance Way
+                // Instead of computing trails per particle in shader (expensive for thousands),
+                // we use a screen-space AfterimagePass which blends the previous frame.
+                // It's extremely cheap (1 fullscreen quad) and looks great for "speed".
+                
+                // We need to import AfterimagePass first. Since we are using import maps, we can use it.
+                // However, AfterimagePass is not in the standard 'three' export usually, it's in examples/jsm/postprocessing/AfterimagePass.js
+                // Let's dynamically import it or assume it's available via the map logic I used.
+                // Wait, I didn't add AfterimagePass to imports. I'll use a dynamic import workaround or just add it to the import map if I could (I can't edit head easily without full rewrite).
+                // Actually, I can just use a simple accumulation approach manually if I can't import, 
+                // BUT standard AfterimagePass is best.
+                // Let's try to import it from the same CDN base.
+                
+                import('three/addons/postprocessing/AfterimagePass.js').then(({ AfterimagePass }) => {
+                    const afterimagePass = new AfterimagePass();
+                    afterimagePass.uniforms['damp'].value = 0.85; // 0.96 is heavy trail, 0.8 is light
+                    composer.addPass(afterimagePass);
+                    sketch.afterimagePass = afterimagePass;
+                });
+
+                sketch.composer = composer;
+
+                sketch.setUI([
+                    { name: 'Speed', value: 1.0, min: 0, max: 3, bind: 'speed' },
+                    { name: 'Point Size', value: 2.0, min: 0.1, max: 10, bind: 'pointSize' },
+                    { name: 'Bloom Str', value: 0.6, min: 0, max: 3, bind: 'bloomStrength' },
+                ]);
+
+                // --- 3D Image Plane Setup ---
+                const texLoader = new THREE.TextureLoader();
+                const cardGeometry = new THREE.PlaneGeometry(15, 15); // Reduced to 0.3x (from 50x50)
+                const cardMaterial = new THREE.MeshBasicMaterial({ 
+                    map: texLoader.load('../sample/Sample1.jpg'),
+                    side: THREE.DoubleSide,
+                    transparent: true,
+                    opacity: 1,
+                    fog: false, // Disable fog to prevent reddish tint from background fog
+                    color: new THREE.Color(0.8, 0.8, 0.8), // Darken slightly to reduce bloom
+                    depthTest: true,
+                    depthWrite: false // Allow particles behind to show? No, we want particles IN FRONT to show.
+                    // If depthWrite is true, it occludes things behind.
+                    // If particles are transparent (depthWrite: false), they are sorted by Z.
+                    // If card is transparent (depthWrite: false), it is also sorted.
+                    // If card is IN FRONT of particles, it covers them.
+                    // The user said "particles moving won't cover the card" -> means card is ON TOP?
+                    // We placed card at Z+5 (relative to horse center).
+                    // This puts it physically in front of the center.
+                    // If we want particles to cover it, we should put it BEHIND the front particles?
+                    // Or put it exactly at center?
+                });
+                const cardMesh = new THREE.Mesh(cardGeometry, cardMaterial);
+                cardMesh.visible = false;
+                cardMesh.scale.set(0, 0, 0); 
+                cardMesh.renderOrder = 1; // Render card first
+                scene.add(cardMesh);
+                
+                sketch.cardMesh = cardMesh;
+                sketch.cardTweenStarted = false;
+                
+                // Camera Auto Mode
+                sketch.cameraAutoMode = true;
+                
+                // Camera Animation Sequence using TWEEN
+                // Wait 2.5s then zoom in
+                setTimeout(() => {
+                    if (sketch.cameraAutoMode) {
+                        sketch.cameraTween = new TWEEN.Tween(camera.position)
+                            .to({ x: 0, y: 0, z: 20 }, 300)
+                            .easing(TWEEN.Easing.Quadratic.InOut)
+                            .onUpdate(() => {
+                                camera.lookAt(0, 0, 0);
+                                if (controls) controls.target.set(0, 0, 0);
+                            })
+                            .onComplete(() => {
+                                sketch.cameraAutoMode = false;
+                            })
+                            .start();
+                    }
+                }, 2500);
+            },
+
+            customRender: (sketch, time, delta) => {
+                const { scene, camera, renderer, composer, params } = sketch;
+
+                TWEEN.update();
+
+                if (horseMixer) {
+                    horseMixer.update(delta * params.speed);
+                }
+                
+                // Update Card Animation
+                if (sketch.cardMesh) {
+                    // Billboard behavior removed as per previous request
+                    sketch.cardMesh.rotation.set(0, 0, 0);
+                    
+                    if (particleMesh && sketch.horseLocalCenter) {
+                        const worldCenter = sketch.horseLocalCenter.clone()
+                            .applyQuaternion(particleMesh.quaternion)
+                            .multiply(particleMesh.scale);
+                        
+                        sketch.cardMesh.position.copy(particleMesh.position).add(worldCenter);
+                        sketch.cardMesh.position.y -= 10; // Offset Y by -10 as requested
+                    }
+                }
+
+                // --- Automatic Sequence ---
+                // 2.5s trigger explosion and card
+                if (time >= 2.5) {
+                    sketch.targetExplosion = 1.0;
+                    
+                    // Trigger TWEEN for card scale only once
+                    if (!sketch.cardTweenStarted && sketch.cardMesh) {
+                        sketch.cardMesh.visible = true;
+                        new TWEEN.Tween(sketch.cardMesh.scale)
+                            .to({ x: 1, y: 1, z: 1 }, 1000)
+                            .easing(TWEEN.Easing.Back.Out)
+                            .start();
+                        sketch.cardTweenStarted = true;
+                    }
+                }
+
+                // Update controls if not in manual tween mode
+                if (controls) {
+                    controls.update();
+                }
+
+                if (particleMesh) {
+                    const uniforms = particleMesh.material.uniforms;
+                    uniforms.uTime.value = time;
+                    uniforms.uExplosion.value = params.explosion;
+                    uniforms.uSize.value = params.pointSize;
+                    
+                    // --- MORPH ANIMATION LOGIC ---
+                    if (sketch.totalMorphFrames > 0) {
+                        // Animation Speed (Frames per second approx)
+                        const animSpeed = 10.0 * params.speed;
+                        const frameTime = time * animSpeed;
+                        
+                        const currentFrame = Math.floor(frameTime) % sketch.totalMorphFrames;
+                        const nextFrame = (currentFrame + 1) % sketch.totalMorphFrames;
+                        const mixVal = frameTime - Math.floor(frameTime);
+                        
+                        // Frame Index is 1-based in texture (0 is base)
+                        // Actually standard horse morphs are 0..N-1.
+                        // In texture we put Base at 0, Morph 0 at 1, Morph 1 at 2...
+                        // So uCurrentFrame should be currentFrame + 1
+                        
+                        uniforms.uCurrentFrame.value = currentFrame + 1;
+                        uniforms.uNextFrame.value = nextFrame + 1;
+                        uniforms.uFrameMix.value = mixVal;
+                    }
+                    
+                    if (sketch.targetExplosion !== undefined) {
+                        params.explosion += (sketch.targetExplosion - params.explosion) * delta * 3.0;
+                        if (Math.abs(params.explosion - sketch.targetExplosion) < 0.01) params.explosion = sketch.targetExplosion;
+                    }
+                }
+                
+                // Snow update
+                if (snowMesh) {
+                     snowMesh.material.uniforms.uTime.value = time;
+                }
+
+                // Intro Animation
+                // Horse movement: 
+                // Start: Pos(-30, -15, 50), RotY(90deg + something?) -> End: Pos(0, -15, 0), RotY(270deg)
+                // Duration: 2s (approx)
+                // Note: Horse Y is -15 in initParticles.
+                
+                if (sketch.introProgress !== undefined && sketch.introProgress < 1.0) {
+                    sketch.introProgress += delta * 0.5; // 0.5 = 1/2s => 2 seconds duration
+                    if(sketch.introProgress > 1.0) sketch.introProgress = 1.0;
+                    
+                    const t = sketch.introProgress;
+                    const ease = 1 - Math.pow(1 - t, 3); // Cubic Out
+                    
+                    if (particleMesh) {
+                        // Position Interpolation
+                        // Start: Far away (Z=-50), Right side (X=30)
+                        // End: Center (0, 0, 0)
+                        const startPos = new THREE.Vector3(30, -15, -50);
+                        const endPos = new THREE.Vector3(0, -15, 0);
+                        particleMesh.position.lerpVectors(startPos, endPos, ease);
+                        
+                        // Rotation Interpolation (Only between 0.5s and 1.5s)
+                        const rotStart = 0.25;
+                        const rotEnd = 0.75;
+                        const rotT = THREE.MathUtils.smoothstep(sketch.introProgress, rotStart, rotEnd);
+                        
+                        // Start: Facing Left-Forward
+                        // End: Facing Screen
+                        const startRot = Math.PI * 1.8;
+                        const endRot = Math.PI * 1.5;
+                        particleMesh.rotation.y = THREE.MathUtils.lerp(startRot, endRot, rotT);
+                    }
+
+                    // Background Color Transition (keep consistent with 2s)
+                    const colorA = new THREE.Color('#001e36');
+                    const colorB = new THREE.Color('#8a0a0a');
+                    const curColor = colorA.lerp(colorB, ease);
+                    scene.background = curColor;
+                    scene.fog.color = curColor;
+                }
+
+                if (composer) {
+                    composer.render();
+                } else {
+                    renderer.render(scene, camera);
+                }
+            },
+
+            onParamChange: (key, value, sketch) => {
+                if (key === 'bloomStrength' && sketch.composer) {
+                    sketch.composer.passes[1].strength = value;
+                }
+            }
+        });
+
+        function initParticles(mesh, sketch) {
+            if (!mesh || !mesh.geometry) {
+                console.error("Invalid mesh passed to initParticles", mesh);
+                return;
+            }
+            const geometry = mesh.geometry;
+            const posAttr = geometry.attributes.position;
+            const indexAttr = geometry.index;
+            const morphAttributes = geometry.morphAttributes;
+            
+            // Check for Morph Attributes instead of Skinning
+            let useMorph = false;
+            let morphCount = 0;
+            if (morphAttributes && morphAttributes.position) {
+                useMorph = true;
+                morphCount = morphAttributes.position.length;
+                console.log("Morph Targets Found:", morphCount);
+            } else {
+                console.warn("No Morph Attributes found! Using static mesh.");
+            }
+
+            const vertexCount = posAttr.count;
+            
+            // --- VAT TEXTURE GENERATION ---
+            // Width = Vertex Count (e.g. 1000)
+            // Height = Frame Count (1 Base + N Morphs)
+            // We'll store:
+            // Row 0: Base Position
+            // Row 1..N: Morph Target Positions
+            
+            // Note: GL_MAX_TEXTURE_SIZE is usually 4096 or 8192 or 16384.
+            // Horse vertex count is low (~700 verts), so Width=700 is fine.
+            // If vertex count > 4096, we need a multi-row or 2D layout.
+            // Let's assume vertexCount fits in width for simplicity, or use a square texture.
+            
+            // Better: Use Square Texture to be safe.
+            const texSize = Math.ceil(Math.sqrt(vertexCount * (morphCount + 1)));
+            // Wait, accessing by (VertexID, FrameID) is easier if:
+            // X = VertexID, Y = FrameID.
+            // Texture Limits: Width 16384. 
+            // Horse has < 1000 vertices. So Width = VertexCount is perfect.
+            
+            const texWidth = vertexCount;
+            const texHeight = morphCount + 1; // +1 for Base
+            
+            const vatData = new Float32Array(texWidth * texHeight * 4);
+            
+            // Fill Row 0 (Base)
+            for (let i = 0; i < vertexCount; i++) {
+                vatData[i*4] = posAttr.getX(i);
+                vatData[i*4+1] = posAttr.getY(i);
+                vatData[i*4+2] = posAttr.getZ(i);
+                vatData[i*4+3] = 1.0;
+            }
+            
+            // Fill Morph Rows
+            if (useMorph) {
+                for (let f = 0; f < morphCount; f++) {
+                    const morphAttr = morphAttributes.position[f];
+                    const rowOffset = (f + 1) * texWidth * 4;
+                    for (let i = 0; i < vertexCount; i++) {
+                        // Morph targets in Three.js are usually DELTAS or ABSOLUTE?
+                        // GLTFLoader usually loads them as ABSOLUTE if raw, but often they are deltas in engine.
+                        // Standard GLTF is deltas. Three.js GLTFLoader output... depends.
+                        // Actually Three.js stores them as absolute positions usually in buffergeometry if processed?
+                        // Wait, THREE.Mesh uses morphTargetInfluences.
+                        // Let's check values.
+                        // If values are small (like 0.1), they are deltas. If they look like positions, they are absolute.
+                        // Horse.glb: Morph targets are complete keyframes (Absolute Positions).
+                        
+                        let x = morphAttr.getX(i);
+                        let y = morphAttr.getY(i);
+                        let z = morphAttr.getZ(i);
+                        
+                        // Three.js BufferAttribute morph targets are usually Deltas?
+                        // "The values are the displacements from the base geometry." - Three.js docs
+                        // So Base + Delta = Target.
+                        // Let's assume DELTAS and add Base.
+                        
+                        x += posAttr.getX(i);
+                        y += posAttr.getY(i);
+                        z += posAttr.getZ(i);
+                        
+                        vatData[rowOffset + i*4] = x;
+                        vatData[rowOffset + i*4+1] = y;
+                        vatData[rowOffset + i*4+2] = z;
+                        vatData[rowOffset + i*4+3] = 1.0;
+                    }
+                }
+            }
+            
+            const morphTex = new THREE.DataTexture(vatData, texWidth, texHeight, THREE.RGBAFormat, THREE.FloatType);
+            morphTex.needsUpdate = true;
+            
+            // 2. Generate Particles
+            const particleCount = 2500;
+            const pGeometry = new THREE.BufferGeometry();
+            const positions = new Float32Array(particleCount * 3); 
+            const vIndices = new Float32Array(particleCount * 3); 
+            const bary = new Float32Array(particleCount * 3);
+            const scatter = new Float32Array(particleCount * 3); // Added Scatter Array
+            
+            // Triangle Distribution Logic (Same as before)
+            const areas = [];
+            let totalArea = 0;
+            const vA = new THREE.Vector3();
+            const vB = new THREE.Vector3();
+            const vC = new THREE.Vector3();
+            
+            for (let i = 0; i < indexAttr.count; i += 3) {
+                const a = indexAttr.getX(i);
+                const b = indexAttr.getX(i+1);
+                const c = indexAttr.getX(i+2);
+                vA.fromBufferAttribute(posAttr, a);
+                vB.fromBufferAttribute(posAttr, b);
+                vC.fromBufferAttribute(posAttr, c);
+                vB.sub(vA); vC.sub(vA); vB.cross(vC);
+                const area = vB.length() * 0.5;
+                areas.push(area);
+                totalArea += area;
+            }
+            
+            for (let i = 0; i < particleCount; i++) {
+                const r = Math.random() * totalArea;
+                let sum = 0;
+                let triIndex = 0;
+                for (let j = 0; j < areas.length; j++) {
+                    sum += areas[j];
+                    if (r <= sum) { triIndex = j; break; }
+                }
+                const i3 = triIndex * 3;
+                vIndices[i*3] = indexAttr.getX(i3);
+                vIndices[i*3+1] = indexAttr.getX(i3+1);
+                vIndices[i*3+2] = indexAttr.getX(i3+2);
+                
+                let u = Math.random(); let v = Math.random();
+                if (u + v > 1) { u = 1 - u; v = 1 - v; }
+                const w = 1 - u - v;
+                bary[i*3] = u; bary[i*3+1] = v; bary[i*3+2] = w;
+
+                // --- Generate Scatter Position (Sphere) ---
+                // Reduced radius to 0.3x (approx 75-120)
+                const radius = 75.0 + Math.random() * 145.0;
+                const theta = Math.random() * Math.PI * 2;
+                const phi = Math.acos(2 * Math.random() - 1);
+                
+                scatter[i*3] = radius * Math.sin(phi) * Math.cos(theta);
+                scatter[i*3+1] = radius * Math.sin(phi) * Math.sin(theta);
+                scatter[i*3+2] = radius * Math.cos(phi);
+            }
+            
+            pGeometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+            pGeometry.setAttribute('aVIndices', new THREE.BufferAttribute(vIndices, 3));
+            pGeometry.setAttribute('aBary', new THREE.BufferAttribute(bary, 3));
+            pGeometry.setAttribute('aScatter', new THREE.BufferAttribute(scatter, 3)); // Add attribute
+            
+            // Calculate Bounding Box Center for Explosion
+            geometry.computeBoundingBox();
+            const center = new THREE.Vector3();
+            if (geometry.boundingBox) {
+                geometry.boundingBox.getCenter(center);
+            }
+            console.log("Calculated Mesh Center:", center);
+             sketch.horseLocalCenter = center; // Store for positioning card
+ 
+             // 3. Create Material
+            const material = new THREE.ShaderMaterial({
+                uniforms: {
+                    uMorphTexture: { value: morphTex },
+                    uTexSize: { value: new THREE.Vector2(texWidth, texHeight) },
+                    uCurrentFrame: { value: 0 },
+                    uNextFrame: { value: 1 },
+                    uFrameMix: { value: 0 },
+                    uUseMorph: { value: useMorph ? 1.0 : 0.0 },
+                    uCenter: { value: center },
+                    
+                    uTime: { value: 0 },
+                    uExplosion: { value: 0 },
+                    uSize: { value: 2.0 }
+                },
+                vertexShader: PARTICLE_VS,
+                fragmentShader: PARTICLE_FS,
+                transparent: true,
+                depthWrite: false,
+                blending: THREE.AdditiveBlending
+            });
+            
+            particleMesh = new THREE.Points(pGeometry, material);
+            particleMesh.renderOrder = 10; // Ensure particles are rendered after the card
+            
+            // --- SCALE & POSITION SETTINGS ---
+            // Adjust the size of the horse here
+            particleMesh.scale.set(0.15, 0.15, 0.15); 
+            particleMesh.position.y = -15;
+            
+            // Rotate 90 degrees around Z axis (in radians)
+            particleMesh.rotation.y = Math.PI *1.5;
+            
+            sketch.scene.add(particleMesh);
+            
+            // Store total frames for animation loop
+            sketch.totalMorphFrames = morphCount;
+        }
+
+        function initSnow(scene) {
+            const count = 500;
+            const geometry = new THREE.BufferGeometry();
+            const pos = new Float32Array(count * 3);
+            const scale = new Float32Array(count);
+            
+            for(let i = 0; i < count; i++) {
+                pos[i*3] = (Math.random() - 0.5) * 100;
+                pos[i*3+1] = (Math.random() - 0.5) * 20 ;
+                pos[i*3+2] = (Math.random() - 0.5) * 100;
+                
+                scale[i] = Math.random();
+            }
+            
+            geometry.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+            geometry.setAttribute('aScale', new THREE.BufferAttribute(scale, 1));
+            
+            const mat = new THREE.ShaderMaterial({
+                 uniforms: {
+                     uTime: { value: 0 },
+                     uSize: { value: 500.0 } // Increased to 5x (from 100.0)
+                 },
+                vertexShader: `
+                    uniform float uTime;
+                    uniform float uSize;
+                    attribute float aScale;
+                    varying float vAlpha;
+                    void main() {
+                        vec3 p = position;
+                        // Snow fall
+                        p.y -= uTime * (5.0 + aScale * 10.0);
+                        p.y = mod(p.y + 50.0, 100.0) - 50.0 + 50.0; // Wrap around
+                        
+                        // Spiral
+                        float angle = uTime * 0.5 + aScale * 10.0;
+                        p.x += sin(angle) * 2.0;
+                        p.z += cos(angle) * 2.0;
+                        
+                        vec4 mv = modelViewMatrix * vec4(p, 1.0);
+                        gl_Position = projectionMatrix * mv;
+                        
+                        gl_PointSize = uSize * aScale * (1.0 / -mv.z);
+                        vAlpha = 0.5 + 0.5 * aScale;
+                    }
+                `,
+                fragmentShader: `
+                    varying float vAlpha;
+                    void main() {
+                        vec2 uv = gl_PointCoord - 0.5;
+                        float dist = length(uv);
+                        if(dist > 0.5) discard;
+                        
+                        float alpha = (0.5 - dist) * 2.0 * vAlpha;
+                        gl_FragColor = vec4(1.0, 1.0, 1.0, alpha);
+                    }
+                `,
+                transparent: true,
+                depthWrite: false,
+                blending: THREE.AdditiveBlending
+            });
+            
+            const mesh = new THREE.Points(geometry, mat);
+            scene.add(mesh);
+            snowMesh = mesh;
+        }
+
+        function startIntroAnimation(sketch) {
+            sketch.introProgress = 0.0;
+        }
+
+    </script>
+</body>
+</html>

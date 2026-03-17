@@ -1,0 +1,115 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Demo 16 - Horse Blessing (Refactored)</title>
+    <style>
+        body { margin: 0; overflow: hidden; background-color: #000; }
+        #container { width: 100vw; height: 100vh; }
+        #loading {
+            position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%);
+            color: #AB0201; font-family: 'Courier New', monospace; font-weight: bold;
+            font-size: 14px; pointer-events: none; text-transform: uppercase;
+            letter-spacing: 2px; transition: opacity 0.5s;
+        }
+    </style>
+    <script async src="https://unpkg.com/es-module-shims@1.8.0/dist/es-module-shims.js"></script>
+    <script type="importmap">
+        {
+            "imports": {
+                "three": "https://unpkg.com/three@0.160.0/build/three.module.js",
+                "three/addons/": "https://unpkg.com/three@0.160.0/examples/jsm/",
+                "@tweenjs/tween.js": "https://unpkg.com/@tweenjs/tween.js@23.1.1/dist/tween.esm.js"
+            }
+        }
+    </script>
+</head>
+<body>
+    <div id="container"></div>
+    <div id="loading">Summoning Spirit...</div>
+    
+    <script type="module">
+        // Import the Paradigm Engine & Effects
+        import { ParticleMorph } from '../lib/ParticleMorph.js';
+        import { GoldSpiritEffect } from '../lib/effects/GoldSpiritEffect.js';
+        import { CyberGlitchEffect } from '../lib/effects/CyberGlitchEffect.js';
+
+        // --- 1. Define the Config (The "Soul") ---
+        const MY_CONFIG = {
+            // Identity
+            modelUrl: 'https://cdn.jsdelivr.net/gh/mrdoob/three.js@master/examples/models/gltf/Horse.glb',
+            textureUrl: '../sample/Sample1.jpg',
+            
+            // Initial Effect
+            effect: new GoldSpiritEffect({ colorStart: '#FFD700', colorEnd: '#AB0201' }),
+            
+            particleCount: 20000,
+            particleSize: 2.5,
+            bloomStrength: 4.5,
+            cameraPos: [0, 0, 40]
+        };
+
+        // --- 2. Initialize the Engine ---
+        const app = new ParticleMorph('container', MY_CONFIG);
+
+        // --- 3. UI Protocol (Standardized) ---
+        const UI_CONFIG = [
+            { 
+                name: '风格切换 (Effect)', 
+                type: 'row', 
+                children: [
+                    { type: 'button', text: '神灵 / Spirit', bind: 'effect_spirit', value: 1 },
+                    { type: 'button', text: '赛博 / Cyber', bind: 'effect_cyber', value: 0 }
+                ]
+            },
+            { name: '灵力流速 (Flow)', value: 0.2, min: 0.0, max: 1.0, step: 0.01, bind: 'noiseSpeed' },
+            { name: '粒子光辉 (Glow)', value: 1.5, min: 0.0, max: 3.0, step: 0.1, bind: 'bloomStrength' },
+            { name: '粒子大小 (Size)', value: 1.5, min: 0.5, max: 4.0, step: 0.1, bind: 'particleSize' },
+            { 
+                name: '祈福仪式', 
+                type: 'row', 
+                children: [
+                    { type: 'button', text: '聚拢 / Form', bind: 'cmd_aggregate', value: 1 },
+                    { type: 'button', text: '祈福 / Bless', bind: 'cmd_disperse', value: 0 }
+                ]
+            },
+            { name: '祈福图片', type: 'file', bind: 'uImage', multiple: false, accept: 'image/*' }
+        ];
+
+        // Send UI Config to Parent
+        function sendConfig() {
+            if (window.parent) window.parent.postMessage({ type: 'UI_CONFIG', config: UI_CONFIG }, '*');
+        }
+        sendConfig();
+
+        // Listen for UI Events
+        window.addEventListener('message', (event) => {
+            const data = event.data;
+            if (!data) return;
+            if (data.type === 'HANDSHAKE') sendConfig();
+            
+            if (data.type === 'UPDATE_PARAM') {
+                if (data.key === 'cmd_aggregate') app.setDisperse(0.0);
+                else if (data.key === 'cmd_disperse') app.setDisperse(1.0);
+                
+                // Effect Switching Logic
+                else if (data.key === 'effect_spirit') {
+                    app.setEffect(new GoldSpiritEffect({ colorStart: '#FFD700', colorEnd: '#AB0201' }));
+                }
+                else if (data.key === 'effect_cyber') {
+                    app.setEffect(new CyberGlitchEffect());
+                }
+                
+                else app.setParam(data.key, data.value);
+            }
+            
+            if (data.type === 'FILE_UPLOAD' && data.bind === 'uImage') {
+                app.updateImageTargets(data.files[0].url);
+                app.setDisperse(1.0);
+            }
+        });
+
+    </script>
+</body>
+</html>

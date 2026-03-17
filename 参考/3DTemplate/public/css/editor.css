@@ -1,0 +1,1016 @@
+/* 全局样式重置 */
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+body {
+  font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+  background: #1e1e1e;
+  color: #cccccc;
+  overflow: hidden;
+  height: 100vh;
+  display: flex;
+  flex-direction: column;
+}
+
+/* 顶部工具栏 */
+.toolbar {
+  background: #2d2d30;
+  border-bottom: 1px solid #3e3e42;
+  padding: 8px 16px;
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  height: 48px;
+  flex-shrink: 0;
+}
+
+.toolbar-section {
+  display: flex;
+  gap: 4px;
+  align-items: center;
+}
+
+.toolbar-btn {
+  background: transparent;
+  border: 1px solid transparent;
+  color: #cccccc;
+  padding: 8px 12px;
+  border-radius: 4px;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  font-size: 14px;
+  min-width: 40px;
+  height: 32px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.toolbar-btn:hover {
+  background: #3e3e42;
+  border-color: #007acc;
+}
+
+.toolbar-btn.active {
+  background: #007acc;
+  border-color: #007acc;
+  color: white;
+}
+
+.toolbar-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+/* 主编辑器容器 */
+.editor-container {
+  display: flex;
+  flex: 1;
+  height: calc(100vh - 48px - 32px - 85px); /* 减去工具栏、状态栏和时间轴高度 */
+}
+
+/* 左侧面板 */
+.left-panel {
+  width: 280px;
+  background: #252526;
+  border-right: 1px solid #3e3e42;
+  overflow-y: auto;
+  flex-shrink: 0;
+}
+
+/* 右侧面板 */
+.right-panel {
+  width: 320px;
+  background: #252526;
+  border-left: 1px solid #3e3e42;
+  overflow-y: auto;
+  flex-shrink: 0;
+}
+
+/* 面板部分 */
+.panel-section {
+  border-bottom: 1px solid #3e3e42;
+}
+
+.panel-title {
+  background: #2d2d30;
+  padding: 12px 16px;
+  font-size: 13px;
+  font-weight: 600;
+  color: #cccccc;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  border-bottom: 1px solid #3e3e42;
+}
+
+.panel-title i {
+  font-size: 12px;
+  opacity: 0.8;
+}
+
+/* 对象库 */
+.object-library {
+  padding: 16px;
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 8px;
+}
+
+.object-btn {
+  background: #2d2d30;
+  border: 1px solid #3e3e42;
+  color: #cccccc;
+  padding: 12px 8px;
+  border-radius: 4px;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  font-size: 11px;
+  text-align: center;
+}
+
+.object-btn:hover {
+  background: #3e3e42;
+  border-color: #007acc;
+}
+
+.object-btn i {
+  font-size: 16px;
+  margin-bottom: 4px;
+}
+
+/* 场景层级 */
+.scene-hierarchy {
+  padding: 16px;
+  max-height: 300px;
+  overflow-y: auto;
+}
+
+.hierarchy-item {
+  padding: 4px 8px;
+  cursor: pointer;
+  border-radius: 3px;
+  font-size: 12px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.hierarchy-item:hover {
+  background: #3e3e42;
+}
+
+.hierarchy-item.selected {
+  background: #007acc;
+  color: white;
+}
+
+.hierarchy-item i {
+  font-size: 10px;
+  opacity: 0.7;
+  min-width: 12px;
+}
+
+/* 对象名称样式 */
+.user-object {
+  color: #4CAF50; /* 绿色 - 用户添加的对象 */
+  font-weight: bold;
+}
+
+.original-object {
+  color: #fff; /* 白色 - 原始场景对象 */
+}
+
+.script-object {
+  color: #FF9800; /* 橙色 - ScriptScene创建的对象 */
+  font-style: italic;
+}
+
+.camera-object {
+  color: #2196F3; /* 蓝色 - 相机对象 */
+  font-weight: 500;
+}
+
+.light-object {
+  color: #FFC107; /* 黄色 - 光源对象 */
+  font-weight: 500;
+}
+
+.script-icon {
+  color: #FF6B6B;
+  margin-left: 5px;
+  font-size: 10px;
+  opacity: 0.7;
+}
+
+.camera-icon {
+  color: #2196F3;
+  margin-left: 5px;
+  font-size: 10px;
+  opacity: 0.8;
+}
+
+.light-icon {
+  color: #FFC107;
+  margin-left: 5px;
+  font-size: 10px;
+  opacity: 0.8;
+}
+
+.hierarchy-item.selected .user-object,
+.hierarchy-item.selected .original-object {
+  color: white; /* 选中时都显示白色 */
+}
+
+/* 主视口 */
+.viewport {
+  flex: 1;
+  background: #1e1e1e;
+  display: flex;
+  flex-direction: column;
+  position: relative;
+}
+
+.viewport-header {
+  background: #2d2d30;
+  border-bottom: 1px solid #3e3e42;
+  padding: 8px 16px;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  height: 44px; /* 稍微增加高度以容纳开关 */
+  flex-shrink: 0;
+}
+
+.viewport-info {
+  display: flex;
+  gap: 16px;
+  font-size: 12px;
+  color: #cccccc;
+}
+
+.transform-hint {
+  color: #808080;
+  font-size: 10px;
+  font-style: italic;
+}
+
+.viewport-controls {
+  display: flex;
+  gap: 4px;
+  align-items: center;
+}
+
+.view-btn {
+  background: transparent;
+  border: 1px solid #3e3e42;
+  color: #cccccc;
+  padding: 4px 8px;
+  border-radius: 3px;
+  cursor: pointer;
+  font-size: 11px;
+  transition: all 0.2s ease;
+}
+
+.view-btn:hover {
+  background: #3e3e42;
+  border-color: #007acc;
+}
+
+.view-btn.active {
+  background: #007acc;
+  border-color: #007acc;
+  color: white;
+}
+
+/* Canvas容器 */
+.canvas-container {
+  flex: 1;
+  position: relative;
+  background: #1a1a1a;
+  overflow: hidden;
+  display: flex;
+  align-items: center;
+  justify-content: center; /* 居中正方形画布 */
+}
+
+.canvas-container canvas {
+  display: block;
+  max-width: 100%;
+  max-height: 100%;
+}
+
+/* 属性面板 */
+.properties-panel, .material-editor, .transform-controls {
+  padding: 16px;
+}
+
+.no-selection {
+  text-align: center;
+  color: #808080;
+  font-size: 12px;
+  padding: 20px;
+}
+
+/* 属性组样式 */
+.property-group {
+  margin-bottom: 20px;
+}
+
+.property-group h4 {
+  color: #cccccc;
+  font-size: 12px;
+  margin-bottom: 12px;
+  padding-bottom: 6px;
+  border-bottom: 1px solid #3e3e42;
+}
+
+.property-item {
+  margin-bottom: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.property-item label {
+  font-size: 11px;
+  color: #cccccc;
+}
+
+.property-item input[type="text"] {
+  background: #1e1e1e;
+  border: 1px solid #3e3e42;
+  color: #cccccc;
+  padding: 6px 8px;
+  border-radius: 3px;
+  font-size: 11px;
+}
+
+.property-item input[type="text"]:focus {
+  outline: none;
+  border-color: #007acc;
+}
+
+.property-item span {
+  font-size: 11px;
+  color: #808080;
+  background: #1e1e1e;
+  padding: 6px 8px;
+  border-radius: 3px;
+}
+
+/* 材质编辑器 */
+.material-property {
+  margin-bottom: 16px;
+}
+
+.material-property label {
+  display: block;
+  font-size: 12px;
+  margin-bottom: 6px;
+  color: #cccccc;
+}
+
+.material-property input[type="color"] {
+  width: 100%;
+  height: 32px;
+  border: 1px solid #3e3e42;
+  border-radius: 4px;
+  background: transparent;
+  cursor: pointer;
+}
+
+.material-property input[type="range"] {
+  width: 100%;
+  margin-right: 8px;
+}
+
+.value-display {
+  font-size: 11px;
+  color: #808080;
+  min-width: 40px;
+  display: inline-block;
+}
+
+/* 变换控制 */
+.transform-group {
+  margin-bottom: 20px;
+}
+
+.transform-group label {
+  display: block;
+  font-size: 12px;
+  margin-bottom: 8px;
+  color: #cccccc;
+}
+
+.input-group {
+  display: grid;
+  grid-template-columns: 1fr 1fr 1fr;
+  gap: 6px;
+}
+
+.input-group input {
+  background: #1e1e1e;
+  border: 1px solid #3e3e42;
+  color: #cccccc;
+  padding: 4px 6px;
+  border-radius: 3px;
+  font-size: 10px;
+  text-align: center;
+  transition: all 0.2s ease;
+  min-width: 0;
+  width: 100%;
+}
+
+.input-group input:focus {
+  outline: none;
+  border-color: #007acc;
+  background: #252526;
+}
+
+/* 实时更新反馈样式 */
+.input-group input.value-updated {
+  background-color: rgba(76, 175, 80, 0.2) !important;
+  border-color: #4CAF50 !important;
+  transition: all 0.2s ease;
+}
+
+/* 层级面板中的对象类型样式 */
+.hierarchy-item .user-object {
+  color: #4CAF50;
+  font-weight: 500;
+}
+
+.hierarchy-item .original-object {
+  color: #FFC107;
+  font-style: italic;
+}
+
+/* 底部状态栏 */
+.status-bar {
+  background: #007acc;
+  color: white;
+  padding: 6px 16px;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  font-size: 11px;
+  height: 32px;
+  flex-shrink: 0;
+}
+
+.status-section {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+/* 滚动条样式 */
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+::-webkit-scrollbar-track {
+  background: #1e1e1e;
+}
+
+::-webkit-scrollbar-thumb {
+  background: #3e3e42;
+  border-radius: 4px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: #007acc;
+}
+
+/* 响应式设计 */
+@media (max-width: 1200px) {
+  .left-panel {
+    width: 240px;
+  }
+  
+  .right-panel {
+    width: 280px;
+  }
+}
+
+@media (max-width: 900px) {
+  .left-panel, .right-panel {
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    z-index: 100;
+    transform: translateX(-100%);
+    transition: transform 0.3s ease;
+  }
+  
+  .left-panel.open, .right-panel.open {
+    transform: translateX(0);
+  }
+  
+  .right-panel {
+    right: 0;
+    transform: translateX(100%);
+  }
+
+  /* 时间轴响应式调整 */
+  .timeline-container {
+    min-height: 95px;
+    padding: 10px 12px;
+  }
+
+  .timeline-track {
+    min-height: 40px;
+  }
+
+  .timeline-markers {
+    min-height: 20px;
+  }
+
+  .timeline-header {
+    height: auto;
+    min-height: 22px;
+  }
+
+  .timeline-title {
+    font-size: 11px;
+  }
+
+  .timeline-info {
+    font-size: 10px;
+  }
+
+  /* 调整编辑器容器高度 */
+  .editor-container {
+    height: calc(100vh - 48px - 32px - 95px);
+  }
+}
+
+/* 动画效果 */
+@keyframes fadeIn {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+.fade-in {
+  animation: fadeIn 0.3s ease;
+}
+
+/* 拖拽效果 */
+.dragging {
+  opacity: 0.7;
+  transform: scale(0.95);
+}
+
+.drop-zone {
+  border: 2px dashed #007acc;
+  background: rgba(0, 122, 204, 0.1);
+}
+
+/* 选择框效果 */
+.selection-box {
+  position: absolute;
+  border: 1px solid #007acc;
+  background: rgba(0, 122, 204, 0.1);
+  pointer-events: none;
+  z-index: 1000;
+}
+
+/* 属性面板特殊信息样式 */
+.script-info {
+  background: rgba(255, 152, 0, 0.1);
+  border: 1px solid rgba(255, 152, 0, 0.3);
+  border-radius: 4px;
+  padding: 8px;
+  margin: 8px 0;
+}
+
+.camera-info {
+  background: rgba(33, 150, 243, 0.1);
+  border: 1px solid rgba(33, 150, 243, 0.3);
+  border-radius: 4px;
+  padding: 8px;
+  margin: 8px 0;
+}
+
+.light-info {
+  background: rgba(255, 193, 7, 0.1);
+  border: 1px solid rgba(255, 193, 7, 0.3);
+  border-radius: 4px;
+  padding: 8px;
+  margin: 8px 0;
+}
+
+.script-info label,
+.camera-info label,
+.light-info label {
+  display: flex;
+  align-items: center;
+  margin-bottom: 4px;
+}
+
+.script-info i,
+.camera-info i,
+.light-info i {
+  margin-right: 5px;
+}
+
+/* 变换输入框实时更新样式 */
+.value-updated {
+  background: rgba(0, 122, 204, 0.2) !important;
+  transition: background 0.2s ease;
+}
+
+/* 相机模式开关样式 */
+.camera-mode-switch {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 100%;
+  padding-left: 12px; /* 添加左边距与其他控件分离 */
+}
+
+.switch-container {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 3px; /* 增加一点间距 */
+}
+
+.switch-label {
+  position: relative;
+  display: inline-block;
+  width: 100px; /* 稍微减小宽度 */
+  height: 26px; /* 调整高度 */
+  cursor: pointer;
+}
+
+.switch-label input {
+  opacity: 0;
+  width: 0;
+  height: 0;
+}
+
+.switch-slider {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: #3e3e42;
+  border: 1px solid #007acc;
+  border-radius: 13px;
+  transition: all 0.3s ease;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 2px;
+  overflow: hidden;
+  box-shadow: inset 0 1px 3px rgba(0,0,0,0.3); /* 添加内阴影增强立体感 */
+}
+
+.switch-slider::before {
+  content: "";
+  position: absolute;
+  height: 20px;
+  width: 48px;
+  left: 2px;
+  bottom: 2px;
+  background: linear-gradient(180deg, #007acc 0%, #005a9e 100%); /* 渐变背景 */
+  border-radius: 10px;
+  transition: all 0.3s ease;
+  z-index: 2;
+  box-shadow: 0 1px 3px rgba(0,0,0,0.4); /* 添加阴影 */
+}
+
+.switch-text-left,
+.switch-text-right {
+  font-size: 8px; /* 进一步减小字体 */
+  font-weight: 600;
+  padding: 0 5px;
+  position: relative;
+  z-index: 3;
+  transition: color 0.3s ease;
+  white-space: nowrap;
+  line-height: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  letter-spacing: -0.2px; /* 稍微压缩字间距 */
+}
+
+.switch-text-left {
+  color: #fff;
+  text-shadow: 0 1px 2px rgba(0,0,0,0.5); /* 添加文字阴影 */
+}
+
+.switch-text-right {
+  color: #888;
+}
+
+input:checked + .switch-slider::before {
+  transform: translateX(48px);
+}
+
+input:checked + .switch-slider .switch-text-left {
+  color: #888;
+  text-shadow: none;
+}
+
+input:checked + .switch-slider .switch-text-right {
+  color: #fff;
+  text-shadow: 0 1px 2px rgba(0,0,0,0.5);
+}
+
+.switch-slider:hover {
+  background: #4a4a4f;
+  border-color: #0099ff; /* 悬停时稍微改变边框颜色 */
+}
+
+.switch-hint {
+  font-size: 8px;
+  color: #007acc;
+  font-weight: 500;
+  text-align: center;
+  line-height: 1;
+  margin-top: 2px;
+  opacity: 0.9; /* 稍微透明 */
+  text-transform: uppercase; /* 转为大写增强设计感 */
+  letter-spacing: 0.5px; /* 增加字母间距 */
+}
+
+/* 相机模式指示器 */
+.camera-mode-indicator {
+  position: absolute;
+  top: 50%;
+  right: 10px;
+  transform: translateY(-50%);
+  font-size: 12px;
+  color: #007acc;
+  background: rgba(0, 122, 204, 0.1);
+  padding: 4px 8px;
+  border-radius: 12px;
+  border: 1px solid rgba(0, 122, 204, 0.3);
+}
+
+/* 时间轴样式 */
+.timeline-container {
+  background: #2d2d30;
+  border-top: 1px solid #3e3e42;
+  padding: 12px 16px;
+  min-height: 85px;
+  height: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  position: relative;
+  box-shadow: 0 -1px 3px rgba(0,0,0,0.2);
+  overflow: visible;
+}
+
+.timeline-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  height: 20px;
+}
+
+.timeline-title {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: #cccccc;
+  font-size: 12px;
+  font-weight: 500;
+}
+
+.timeline-title i {
+  color: #007acc;
+  font-size: 13px;
+}
+
+.timeline-info {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  color: #888888;
+  font-size: 11px;
+  font-family: 'Courier New', monospace;
+}
+
+.timeline-info #timelineCurrentTime {
+  color: #007acc;
+  font-weight: 600;
+}
+
+.timeline-track {
+  position: relative;
+  min-height: 35px;
+  height: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  overflow: visible;
+}
+
+.timeline-background {
+  position: relative;
+  height: 12px;
+  background: #1e1e1e;
+  border: 1px solid #3e3e42;
+  border-radius: 6px;
+  overflow: hidden;
+  box-shadow: inset 0 1px 3px rgba(0,0,0,0.3);
+}
+
+.timeline-progress {
+  position: absolute;
+  top: 0;
+  left: 0;
+  height: 100%;
+  background: linear-gradient(90deg, #007acc 0%, #0099ff 100%);
+  border-radius: 5px;
+  transition: width 0.1s ease;
+  box-shadow: 0 0 6px rgba(0, 122, 204, 0.4);
+}
+
+.timeline-cursor {
+  position: absolute;
+  top: -4px;
+  width: 2px;
+  height: 20px;
+  background: #ffffff;
+  border-radius: 1px;
+  box-shadow: 0 0 4px rgba(255, 255, 255, 0.6);
+  transition: left 0.1s ease;
+  z-index: 10;
+  cursor: grab;
+}
+
+.timeline-cursor::before {
+  content: '';
+  position: absolute;
+  top: -3px;
+  left: -3px;
+  width: 8px;
+  height: 8px;
+  background: #ffffff;
+  border-radius: 50%;
+  box-shadow: 0 0 6px rgba(255, 255, 255, 0.8);
+}
+
+.timeline-markers {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  min-height: 18px;
+  height: auto;
+  padding: 2px 2px 0 2px;
+  overflow: visible;
+}
+
+.timeline-marker {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  position: relative;
+}
+
+.timeline-marker-line {
+  width: 1px;
+  height: 6px;
+  background: #555555;
+}
+
+.timeline-marker-line.major {
+  height: 8px;
+  background: #777777;
+}
+
+.timeline-marker-text {
+  font-size: 9px;
+  color: #888888;
+  margin-top: 2px;
+  font-family: 'Courier New', monospace;
+}
+
+/* 时间轴悬停效果 */
+.timeline-background {
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.timeline-background:hover {
+  border-color: #007acc;
+  background: #252525;
+}
+
+.timeline-container:hover .timeline-progress {
+  box-shadow: 0 0 8px rgba(0, 122, 204, 0.6);
+}
+
+/* 时间轴拖拽状态 */
+.timeline-background:active {
+  cursor: grabbing;
+  border-color: #0099ff;
+  background: #2a2a2a;
+}
+
+.timeline-cursor:hover {
+  transform: scale(1.2);
+  box-shadow: 0 0 8px rgba(255, 255, 255, 0.8);
+}
+
+/* 播放按钮状态 */
+.toolbar-btn#playBtn {
+  transition: all 0.2s ease;
+}
+
+.toolbar-btn#playBtn:hover {
+  background: rgba(0, 122, 204, 0.2);
+  transform: scale(1.05);
+}
+
+.toolbar-btn#playBtn.playing {
+  background: rgba(0, 122, 204, 0.3);
+  color: #00ff88;
+}
+
+/* 时间轴动画状态指示 */
+.timeline-container.playing {
+  border-top-color: #007acc;
+}
+
+.timeline-container.playing .timeline-title i {
+  animation: pulse 1.5s ease-in-out infinite;
+}
+
+@keyframes pulse {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50% { opacity: 0.7; transform: scale(1.1); }
+}
+
+/* 超小屏幕响应式调整 */
+@media (max-width: 600px) {
+  .timeline-container {
+    min-height: 100px;
+    padding: 8px 10px;
+  }
+
+  .timeline-track {
+    min-height: 45px;
+  }
+
+  .timeline-markers {
+    min-height: 22px;
+    padding: 3px 2px 0 2px;
+  }
+
+  .timeline-header {
+    min-height: 24px;
+    flex-wrap: wrap;
+    gap: 4px;
+  }
+
+  .timeline-title {
+    font-size: 10px;
+  }
+
+  .timeline-info {
+    font-size: 9px;
+  }
+
+  .timeline-marker-text {
+    font-size: 8px;
+  }
+
+  /* 确保游标在小屏幕上也可见 */
+  .timeline-cursor {
+    width: 3px;
+    height: 22px;
+    top: -5px;
+  }
+
+  .timeline-cursor::before {
+    width: 10px;
+    height: 10px;
+    left: -3.5px;
+    top: -4px;
+  }
+
+  /* 调整编辑器容器高度 */
+  .editor-container {
+    height: calc(100vh - 48px - 32px - 100px);
+  }
+} 

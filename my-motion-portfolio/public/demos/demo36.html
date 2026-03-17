@@ -1,0 +1,333 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>测试-1</title>
+  <style>
+    html, body { margin: 0; padding: 0; width: 100%; height: 100%; background: #000; overflow: hidden; }
+    #container { width: 100vw; height: 100vh; }
+  </style>
+  <script async src="https://unpkg.com/es-module-shims@1.8.0/dist/es-module-shims.js"></script>
+  <script type="importmap">
+    {
+      "imports": {
+        "three": "../js/libs/three/three.module.js",
+        "three/addons/": "../js/libs/three/addons/"
+      }
+    }
+  </script>
+</head>
+<body>
+  <div id="container"></div>
+  <script type="module">
+    import * as THREE from 'three';
+    import * as TWEEN from 'https://unpkg.com/@tweenjs/tween.js@23.1.1/dist/tween.esm.js';
+
+    const __EXPORT_TEXT = "/**\n * ScriptScene.js - Exported from CupCut Motion Lab\n * \n * 适配说明：\n * 1. 本文件为剪映/特效平台通用适配层\n * 2. 包含生命周期管理和渲染循环\n * 3. 核心逻辑位于 setupScene 和 setupAnimations\n */\n\nconst TWEEN = require('../lib/tween');\nconst THREE = require('three');\n\nclass ScriptScene {\n  constructor(amgScene = null, container = null) {\n    if (amgScene) {\n      this.scene = new THREE.Scene();\n      this.scene._amgScene = amgScene;\n    } else {\n      this.scene = new THREE.Scene();\n    }\n    this.camera = null;\n    this.renderer = null;\n    this.scene.background = new THREE.Color(0x000000);\n    this.isAnimating = false;\n    this.animationFrameId = null;\n    this.sceneObjects = { tweens: [] };\n\n    this.initCoreObjects();\n    if (container) {\n      this.init(container);\n    }\n  }\n\n  destroy() {\n    this.isAnimating = false;\n    if (this.animationFrameId !== null && typeof cancelAnimationFrame !== 'undefined') {\n      cancelAnimationFrame(this.animationFrameId);\n      this.animationFrameId = null;\n    }\n    if (this.renderer) {\n      this.renderer.setAnimationLoop(null);\n      this.renderer.dispose();\n      if (this.renderer.domElement && this.renderer.domElement.parentNode) {\n        this.renderer.domElement.parentNode.removeChild(this.renderer.domElement);\n      }\n    }\n    if (this.scene) {\n      this.scene.dispose();\n    }\n    if (this.sceneObjects && this.sceneObjects.tweens) {\n      this.sceneObjects.tweens.forEach(tween => {\n          if(tween && tween.stop) tween.stop();\n      });\n    }\n  }\n\n  initCoreObjects() {\n    // Default config suitable for CapCut mobile context\n    // In real engine, window.innerWidth might be mocked or fixed\n    if (typeof window !== 'undefined') {\n        window.innerWidth = window.innerWidth || 720; \n        window.innerHeight = window.innerHeight || 1280;\n        window.devicePixelRatio = window.devicePixelRatio || 2;\n    }\n\n    this.camera = new THREE.PerspectiveCamera(75, 720 / 1280, 0.1, 1000);\n    this.camera.position.z = 5;\n    this.scene.add(this.camera);\n\n    if (this.scene._amgScene == null) {\n      this.renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });\n      this.renderer.outputColorSpace = THREE.LinearSRGBColorSpace;\n    }\n    if (this.renderer) {\n      this.renderer.setSize(window.innerWidth || 720, window.innerHeight || 1280);\n      this.renderer.setPixelRatio(window.devicePixelRatio || 1);\n    }\n    \n    this.TWEEN = TWEEN;\n    this.Duration = 3000;\n  }\n\n  loadTextures() {\n    return Promise.resolve(); // 默认实现，返回空 Promise\n  }\n\n  //===begin===\n  initSceneObjects() {\n    this.sceneObjects = {\n      group_1: null,\n      box_1: null,\n      tweens: []\n    };\n  }\n\n  setupScene() {\n    this.initSceneObjects();\n    this.scene.background = new THREE.Color(0x333333);\n\n    // 创建 group_1\n    const group_1_geo = new THREE.BoxGeometry(1, 1, 1);\n    const group_1_mat = new THREE.MeshStandardMaterial({\n      color: 0xcccccc,\n    });\n    const group_1 = new THREE.Mesh(group_1_geo, group_1_mat);\n    group_1.position.set(0.0000, 0.0000, 0.0000);\n    group_1.rotation.set(0.0000, 0.0000, 0.0000);\n    group_1.scale.set(1.0000, 1.0000, 1.0000);\n    this.scene.add(group_1);\n    this.sceneObjects.group_1 = group_1;\n\n    // 创建 box_1\n    const box_1_geo = new THREE.BoxGeometry(1, 1, 1);\n    const box_1_mat = new THREE.MeshStandardMaterial({\n      color: 0xcccccc,\n    });\n    const box_1 = new THREE.Mesh(box_1_geo, box_1_mat);\n    box_1.position.set(0.0000, 0.0000, 0.0000);\n    box_1.rotation.set(-1.5708, 1.5708, 0.0000);\n    box_1.scale.set(1.0000, 1.0000, 1.0000);\n    this.scene.add(box_1);\n    this.sceneObjects.box_1 = box_1;\n\n    this.setupEffects();\n    this.setupAnimations();\n    return this.sceneObjects;\n  }\n\n  setupAnimations() {\n    const duration = this.Duration;\n    this.sceneObjects.tweens = [];\n    const resolveEasing = (name) => {\n      if (typeof name !== 'string' || !name) return TWEEN.Easing.Linear.None;\n      const parts = name.split('.');\n      if (parts.length === 2 && TWEEN.Easing[parts[0]] && TWEEN.Easing[parts[0]][parts[1]]) {\n        return TWEEN.Easing[parts[0]][parts[1]];\n      }\n      return TWEEN.Easing.Linear.None;\n    };\n    const applyShaderParam = (shaderPass, key, value) => {\n      if (!shaderPass) return;\n      if (typeof shaderPass.setParameter === 'function') {\n        shaderPass.setParameter(key, value);\n        return;\n      }\n      if (typeof shaderPass.setParameters === 'function') {\n        shaderPass.setParameters({ [key]: value });\n        return;\n      }\n      if (typeof shaderPass.setParams === 'function') {\n        shaderPass.setParams({ [key]: value });\n        return;\n      }\n      if (shaderPass.params && Object.prototype.hasOwnProperty.call(shaderPass.params, key)) {\n        shaderPass.params[key] = value;\n      }\n    };\n\n    const effectStack = Array.isArray(this.effectStack) ? this.effectStack : [];\n    const effectPassMap = Array.isArray(this.effectPassMap) ? this.effectPassMap : [];\n    effectStack.forEach((effect, effectIndex) => {\n      if (!effect || !effect.keyframes) return;\n      const passIndex = effectPassMap[effectIndex];\n      if (!Number.isFinite(passIndex) || passIndex < 0) return;\n      const shaderPass = this.shaderPasses ? this.shaderPasses[passIndex] : null;\n      if (!shaderPass) return;\n      const keyframes = effect.keyframes || {};\n      Object.keys(keyframes).forEach((paramName) => {\n        const frames = keyframes[paramName];\n        if (!Array.isArray(frames) || frames.length < 2) return;\n        for (let k = 0; k < frames.length - 1; k++) {\n          const kfA = frames[k];\n          const kfB = frames[k + 1];\n          const tweenDuration = kfB.time - kfA.time;\n          const delay = kfA.time;\n          const easingFn = resolveEasing(kfB.easing);\n          const fromValue = kfA.value;\n          const toValue = kfB.value;\n          if (!Number.isFinite(tweenDuration) || tweenDuration <= 0) {\n            applyShaderParam(shaderPass, paramName, toValue);\n            return;\n          }\n          if (Array.isArray(fromValue) && Array.isArray(toValue)) {\n            const start = {};\n            const end = {};\n            const len = Math.min(fromValue.length, toValue.length);\n            for (let i = 0; i < len; i++) {\n              const startNum = Number(fromValue[i]);\n              const endNum = Number(toValue[i]);\n              start[`v${i}`] = Number.isFinite(startNum) ? startNum : 0;\n              end[`v${i}`] = Number.isFinite(endNum) ? endNum : start[`v${i}`];\n            }\n            const tween = new TWEEN.Tween(start)\n              .to(end, tweenDuration)\n              .easing(easingFn)\n              .onUpdate((obj) => {\n                const arr = [];\n                for (let i = 0; i < len; i++) {\n                  arr.push(obj[`v${i}`]);\n                }\n                applyShaderParam(shaderPass, paramName, arr);\n              });\n            if (delay > 0) {\n              tween.delay(delay);\n            }\n            this.sceneObjects.tweens.push(tween);\n            return;\n          }\n          const startNum = Number(fromValue);\n          const endNum = Number(toValue);\n          if (Number.isFinite(startNum) && Number.isFinite(endNum)) {\n            const tween = new TWEEN.Tween({ value: startNum })\n              .to({ value: endNum }, tweenDuration)\n              .easing(easingFn)\n              .onUpdate((obj) => {\n                applyShaderParam(shaderPass, paramName, obj.value);\n              });\n            if (delay > 0) {\n              tween.delay(delay);\n            }\n            this.sceneObjects.tweens.push(tween);\n            return;\n          }\n          const tween = new TWEEN.Tween({ t: 0 })\n            .to({ t: 1 }, tweenDuration)\n            .easing(easingFn)\n            .onUpdate((obj) => {\n              const value = obj.t < 1 ? fromValue : toValue;\n              applyShaderParam(shaderPass, paramName, value);\n            });\n          if (delay > 0) {\n            tween.delay(delay);\n          }\n          this.sceneObjects.tweens.push(tween);\n        }\n      });\n    });\n\n    // 启动所有动画\n    this.sceneObjects.tweens.forEach(t => t.start());\n  }\n\n  setupEffects() {\n    this.effectStack = [];\n    const shaderPassConfigs = [];\n    this.effectPassMap = [];\n    this.effectStack.forEach((effect, index) => {\n      if (effect && typeof effect.id === 'string' && effect.id.startsWith('Lumi')) {\n        shaderPassConfigs.push({ name: effect.id });\n        this.effectPassMap[index] = shaderPassConfigs.length - 1;\n      } else {\n        this.effectPassMap[index] = -1;\n      }\n    });\n    this.shaderPasses = [];\n    if (shaderPassConfigs.length > 0) {\n      this.setupPostProcessing(shaderPassConfigs);\n    }\n    this.applyEffectStack(this.effectStack);\n    if (this.shaderPasses && this.shaderPasses.length) {\n      this.effectStack.forEach((effect, index) => {\n        const passIndex = this.effectPassMap[index];\n        if (!Number.isFinite(passIndex) || passIndex < 0) return;\n        const shaderPass = this.shaderPasses[passIndex];\n        if (!shaderPass || !effect) return;\n        shaderPass.enabled = effect.enabled !== false;\n        const params = effect.params || {};\n        Object.keys(params).forEach((key) => {\n          const value = params[key];\n          if (typeof shaderPass.setParameter === 'function') {\n            shaderPass.setParameter(key, value);\n            return;\n          }\n          if (typeof shaderPass.setParameters === 'function') {\n            shaderPass.setParameters({ [key]: value });\n            return;\n          }\n          if (typeof shaderPass.setParams === 'function') {\n            shaderPass.setParams({ [key]: value });\n            return;\n          }\n          if (shaderPass.params && Object.prototype.hasOwnProperty.call(shaderPass.params, key)) {\n            shaderPass.params[key] = value;\n          }\n        });\n      });\n    }\n  }\n\n  updateEffects() {\n    if (!this.effectStack) return;\n    this.applyEffectStack(this.effectStack);\n  }\n  //===end===\n\n  init(container) {\n    if (this.renderer && container) {\n      container.appendChild(this.renderer.domElement);\n    }\n    if (typeof window !== 'undefined') {\n      window.addEventListener('resize', () => this.handleResize());\n    }\n  }\n\n  start(updateCallback) {\n    if (this.isAnimating) return;\n    this.isAnimating = true;\n    if (updateCallback) {\n        const animateFrame = () => {\n            if (!this.isAnimating) return;\n            updateCallback();\n            this.animationFrameId = requestAnimationFrame(animateFrame);\n        };\n        animateFrame();\n    } else {\n        this.renderer.setAnimationLoop(() => {\n            this.update();\n        });\n    }\n  }\n\n  updateScene(timestamp) {\n    if (!this.isAnimating) this.isAnimating = true;\n    this.defaultUpdate(timestamp);\n  }\n\n  update() {\n    if (this.renderer) {\n      this.renderer.render(this.scene, this.camera);\n    }\n  }\n\n  defaultUpdate(timestamp) {\n    if (this.sceneObjects.tweens && this.sceneObjects.tweens.length > 0) {\n      this.sceneObjects.tweens.forEach(tween => tween.update(timestamp));\n    }\n    if (this.TWEEN) this.TWEEN.update(timestamp);\n    this.update();\n  }\n\n  seekToTime(time) {\n    const t = typeof time === 'number' ? time : 0;\n    this.defaultUpdate(t);\n  }\n  \n  handleResize() {\n      if(!this.camera || !this.renderer) return;\n      if (typeof window !== 'undefined') {\n        this.camera.aspect = window.innerWidth / window.innerHeight;\n        this.camera.updateProjectionMatrix();\n        this.renderer.setSize(window.innerWidth, window.innerHeight);\n      }\n  }\n}\n\nmodule.exports = ScriptScene;\n";
+
+    class ScriptScene {
+      constructor(amgScene = null, container = null) {
+        this.scene = new THREE.Scene();
+        this.camera = null;
+        this.renderer = null;
+        this.sceneObjects = { tweens: [] };
+        this.isAnimating = false;
+        this.animationFrameId = null;
+        this.TWEEN = TWEEN;
+        this.Duration = 2000;
+        this.texture1 = null;
+        this.texture2 = null;
+
+        this.initCoreObjects();
+        if (container) this.init(container);
+      }
+
+      initCoreObjects() {
+        this.camera = new THREE.PerspectiveCamera(53.1, window.innerWidth / window.innerHeight, 0.1, 10000);
+        this.camera.position.z = 10;
+        this.scene.add(this.camera);
+        this.renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+        this.renderer.outputColorSpace = THREE.SRGBColorSpace;
+        this.renderer.setSize(window.innerWidth, window.innerHeight);
+        this.renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
+      }
+
+      init(container) {
+        container.appendChild(this.renderer.domElement);
+        window.addEventListener('resize', () => this.handleResize());
+      }
+
+      handleResize() {
+        if (!this.camera || !this.renderer) return;
+        this.camera.aspect = window.innerWidth / window.innerHeight;
+        this.camera.updateProjectionMatrix();
+        this.renderer.setSize(window.innerWidth, window.innerHeight);
+      }
+
+      start(updateCallback) {
+        if (this.isAnimating) return;
+        this.isAnimating = true;
+        const animateFrame = (t) => {
+          if (!this.isAnimating) return;
+          updateCallback(t);
+          this.animationFrameId = requestAnimationFrame(animateFrame);
+        };
+        this.animationFrameId = requestAnimationFrame(animateFrame);
+      }
+
+      update() {
+        if (this.renderer) this.renderer.render(this.scene, this.camera);
+      }
+
+      defaultUpdate(timestamp) {
+        if (this.TWEEN && typeof this.TWEEN.update === 'function') {
+          this.TWEEN.update(timestamp);
+        } else if (this.sceneObjects && this.sceneObjects.tweens && this.sceneObjects.tweens.length > 0) {
+          this.sceneObjects.tweens.forEach(tween => {
+            if (tween && typeof tween.update === 'function') tween.update(timestamp);
+          });
+        }
+        this.update();
+      }
+
+  initSceneObjects() {
+    this.sceneObjects = {
+      group_1: null,
+      box_1: null,
+      tweens: []
+    };
+  }
+
+  setupScene() {
+    this.initSceneObjects();
+    this.scene.background = new THREE.Color(0x333333);
+
+    // 创建 group_1
+    const group_1_geo = new THREE.BoxGeometry(1, 1, 1);
+    const group_1_mat = new THREE.MeshStandardMaterial({
+      color: 0xcccccc,
+    });
+    const group_1 = new THREE.Mesh(group_1_geo, group_1_mat);
+    group_1.position.set(0.0000, 0.0000, 0.0000);
+    group_1.rotation.set(0.0000, 0.0000, 0.0000);
+    group_1.scale.set(1.0000, 1.0000, 1.0000);
+    this.scene.add(group_1);
+    this.sceneObjects.group_1 = group_1;
+
+    // 创建 box_1
+    const box_1_geo = new THREE.BoxGeometry(1, 1, 1);
+    const box_1_mat = new THREE.MeshStandardMaterial({
+      color: 0xcccccc,
+    });
+    const box_1 = new THREE.Mesh(box_1_geo, box_1_mat);
+    box_1.position.set(0.0000, 0.0000, 0.0000);
+    box_1.rotation.set(-1.5708, 1.5708, 0.0000);
+    box_1.scale.set(1.0000, 1.0000, 1.0000);
+    this.scene.add(box_1);
+    this.sceneObjects.box_1 = box_1;
+
+    this.setupEffects();
+    this.setupAnimations();
+    return this.sceneObjects;
+  }
+
+  setupAnimations() {
+    const duration = this.Duration;
+    this.sceneObjects.tweens = [];
+    const resolveEasing = (name) => {
+      if (typeof name !== 'string' || !name) return TWEEN.Easing.Linear.None;
+      const parts = name.split('.');
+      if (parts.length === 2 && TWEEN.Easing[parts[0]] && TWEEN.Easing[parts[0]][parts[1]]) {
+        return TWEEN.Easing[parts[0]][parts[1]];
+      }
+      return TWEEN.Easing.Linear.None;
+    };
+    const applyShaderParam = (shaderPass, key, value) => {
+      if (!shaderPass) return;
+      if (typeof shaderPass.setParameter === 'function') {
+        shaderPass.setParameter(key, value);
+        return;
+      }
+      if (typeof shaderPass.setParameters === 'function') {
+        shaderPass.setParameters({ [key]: value });
+        return;
+      }
+      if (typeof shaderPass.setParams === 'function') {
+        shaderPass.setParams({ [key]: value });
+        return;
+      }
+      if (shaderPass.params && Object.prototype.hasOwnProperty.call(shaderPass.params, key)) {
+        shaderPass.params[key] = value;
+      }
+    };
+
+    const effectStack = Array.isArray(this.effectStack) ? this.effectStack : [];
+    const effectPassMap = Array.isArray(this.effectPassMap) ? this.effectPassMap : [];
+    effectStack.forEach((effect, effectIndex) => {
+      if (!effect || !effect.keyframes) return;
+      const passIndex = effectPassMap[effectIndex];
+      if (!Number.isFinite(passIndex) || passIndex < 0) return;
+      const shaderPass = this.shaderPasses ? this.shaderPasses[passIndex] : null;
+      if (!shaderPass) return;
+      const keyframes = effect.keyframes || {};
+      Object.keys(keyframes).forEach((paramName) => {
+        const frames = keyframes[paramName];
+        if (!Array.isArray(frames) || frames.length < 2) return;
+        for (let k = 0; k < frames.length - 1; k++) {
+          const kfA = frames[k];
+          const kfB = frames[k + 1];
+          const tweenDuration = kfB.time - kfA.time;
+          const delay = kfA.time;
+          const easingFn = resolveEasing(kfB.easing);
+          const fromValue = kfA.value;
+          const toValue = kfB.value;
+          if (!Number.isFinite(tweenDuration) || tweenDuration <= 0) {
+            applyShaderParam(shaderPass, paramName, toValue);
+            return;
+          }
+          if (Array.isArray(fromValue) && Array.isArray(toValue)) {
+            const start = {};
+            const end = {};
+            const len = Math.min(fromValue.length, toValue.length);
+            for (let i = 0; i < len; i++) {
+              const startNum = Number(fromValue[i]);
+              const endNum = Number(toValue[i]);
+              start[`v${i}`] = Number.isFinite(startNum) ? startNum : 0;
+              end[`v${i}`] = Number.isFinite(endNum) ? endNum : start[`v${i}`];
+            }
+            const tween = new TWEEN.Tween(start)
+              .to(end, tweenDuration)
+              .easing(easingFn)
+              .onUpdate((obj) => {
+                const arr = [];
+                for (let i = 0; i < len; i++) {
+                  arr.push(obj[`v${i}`]);
+                }
+                applyShaderParam(shaderPass, paramName, arr);
+              });
+            if (delay > 0) {
+              tween.delay(delay);
+            }
+            this.sceneObjects.tweens.push(tween);
+            return;
+          }
+          const startNum = Number(fromValue);
+          const endNum = Number(toValue);
+          if (Number.isFinite(startNum) && Number.isFinite(endNum)) {
+            const tween = new TWEEN.Tween({ value: startNum })
+              .to({ value: endNum }, tweenDuration)
+              .easing(easingFn)
+              .onUpdate((obj) => {
+                applyShaderParam(shaderPass, paramName, obj.value);
+              });
+            if (delay > 0) {
+              tween.delay(delay);
+            }
+            this.sceneObjects.tweens.push(tween);
+            return;
+          }
+          const tween = new TWEEN.Tween({ t: 0 })
+            .to({ t: 1 }, tweenDuration)
+            .easing(easingFn)
+            .onUpdate((obj) => {
+              const value = obj.t < 1 ? fromValue : toValue;
+              applyShaderParam(shaderPass, paramName, value);
+            });
+          if (delay > 0) {
+            tween.delay(delay);
+          }
+          this.sceneObjects.tweens.push(tween);
+        }
+      });
+    });
+
+    // 启动所有动画
+    this.sceneObjects.tweens.forEach(t => t.start());
+  }
+
+  setupEffects() {
+    this.effectStack = [];
+    const shaderPassConfigs = [];
+    this.effectPassMap = [];
+    this.effectStack.forEach((effect, index) => {
+      if (effect && typeof effect.id === 'string' && effect.id.startsWith('Lumi')) {
+        shaderPassConfigs.push({ name: effect.id });
+        this.effectPassMap[index] = shaderPassConfigs.length - 1;
+      } else {
+        this.effectPassMap[index] = -1;
+      }
+    });
+    this.shaderPasses = [];
+    if (shaderPassConfigs.length > 0) {
+      this.setupPostProcessing(shaderPassConfigs);
+    }
+    this.applyEffectStack(this.effectStack);
+    if (this.shaderPasses && this.shaderPasses.length) {
+      this.effectStack.forEach((effect, index) => {
+        const passIndex = this.effectPassMap[index];
+        if (!Number.isFinite(passIndex) || passIndex < 0) return;
+        const shaderPass = this.shaderPasses[passIndex];
+        if (!shaderPass || !effect) return;
+        shaderPass.enabled = effect.enabled !== false;
+        const params = effect.params || {};
+        Object.keys(params).forEach((key) => {
+          const value = params[key];
+          if (typeof shaderPass.setParameter === 'function') {
+            shaderPass.setParameter(key, value);
+            return;
+          }
+          if (typeof shaderPass.setParameters === 'function') {
+            shaderPass.setParameters({ [key]: value });
+            return;
+          }
+          if (typeof shaderPass.setParams === 'function') {
+            shaderPass.setParams({ [key]: value });
+            return;
+          }
+          if (shaderPass.params && Object.prototype.hasOwnProperty.call(shaderPass.params, key)) {
+            shaderPass.params[key] = value;
+          }
+        });
+      });
+    }
+  }
+
+  updateEffects() {
+    if (!this.effectStack) return;
+    this.applyEffectStack(this.effectStack);
+  }
+    }
+
+    const container = document.getElementById('container');
+    const s = new ScriptScene(null, container);
+    window.__scriptScene = s;
+
+    async function boot() {
+      
+      if (typeof s.setupScene === 'function') await s.setupScene();
+      s.start((t) => s.defaultUpdate(t));
+    }
+    boot();
+
+    window.addEventListener('message', (e) => {
+      const d = e.data;
+      if (!d || !d.type) return;
+      if (d.type === 'HANDSHAKE') {
+        parent.postMessage({ type: 'UI_CONFIG', config: [] }, '*');
+      }
+      if (d.type === 'EXPORT_SCRIPT_SCENE') {
+        const blob = new Blob([__EXPORT_TEXT], { type: 'application/javascript' });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = 'scriptScene.js';
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        URL.revokeObjectURL(url);
+      }
+    });
+  </script>
+</body>
+</html>

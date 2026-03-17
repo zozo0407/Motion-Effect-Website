@@ -1,0 +1,162 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Demo 26 - Retro Dither/ASCII</title>
+    <style>
+        body { margin: 0; overflow: hidden; background: #000; }
+        #container { width: 100vw; height: 100vh; }
+    </style>
+    <!-- Import Map for Three.js -->
+    <script type="importmap">
+        {
+            "imports": {
+                "three": "../js/libs/three/three.module.js",
+                "three/addons/": "../js/libs/three/addons/"
+            }
+        }
+    </script>
+</head>
+<body>
+    <div id="container"></div>
+
+    <script type="module">
+        import { UnifiedRenderer } from '../js/UnifiedRenderer.js';
+        import * as THREE from 'three';
+
+        // --- Retro Dither/ASCII Shader ---
+        // A procedural ASCII/Dither effect that doesn't require external font textures.
+        const fragmentShader = `
+            uniform float uTime;
+            uniform vec2 uResolution;
+            uniform sampler2D uTexture;
+            uniform bool uIsAscii;
+            uniform float uPixelSize;
+            uniform float uOpacity;
+            uniform vec3 uColor;
+
+            // Character bitmap constants (simplified 3x5 or 4x4 patterns)
+            float character(float n, vec2 p) {
+                p = floor(p*vec2(4.0, -4.0) + 2.5);
+                if (clamp(p.x, 0.0, 4.0) == p.x && clamp(p.y, 0.0, 4.0) == p.y) {
+                    if (int(mod(n/exp2(p.x + 5.0*p.y), 2.0)) == 1) return 1.0;
+                }
+                return 0.0;
+            }
+
+            // Luminance
+            float getLum(vec3 c) {
+                return dot(c, vec3(0.299, 0.587, 0.114));
+            }
+
+            void main() {
+                vec2 uv = gl_FragCoord.xy / uResolution.xy;
+                
+                // Pixelate
+                float size = uPixelSize; // Grid size
+                vec2 grid = vec2(uResolution.x / size, uResolution.y / size);
+                vec2 blockPos = floor(uv * grid) / grid;
+                vec2 blockCenter = blockPos + vec2(1.0/grid.x, 1.0/grid.y) * 0.5;
+                
+                // Sample texture
+                vec4 tex = texture2D(uTexture, blockCenter);
+                float gray = getLum(tex.rgb);
+                
+                vec3 finalColor = vec3(0.0);
+
+                if (uIsAscii) {
+                    // ASCII Mode
+                    // Map brightness to character density
+                    // 0: space, 1: ., 2: :, 3: *, 4: o, 5: &, 6: 8, 7: @
+                    int charIndex = int(gray * 7.0);
+                    
+                    // Procedural character logic (simplified for stability without texture)
+                    // We use a distance field or pattern for simplicity in this port
+                    vec2 charUV = fract(uv * grid); // 0-1 within block
+                    
+                    float d = 0.0;
+                    vec2 p = charUV * 2.0 - 1.0;
+                    
+                    if (charIndex == 0) d = 0.0;
+                    else if (charIndex == 1) d = step(length(p), 0.1); // .
+                    else if (charIndex == 2) d = step(abs(p.x), 0.1) * step(abs(p.y), 0.5); // : (approx)
+                    else if (charIndex == 3) d = step(abs(p.x*p.y), 0.05); // *
+                    else if (charIndex == 4) d = step(abs(length(p)-0.5), 0.1); // o
+                    else if (charIndex == 5) d = step(max(abs(p.x), abs(p.y)), 0.6); // Box
+                    else if (charIndex == 6) d = step(length(p), 0.8); // Filled circle
+                    else d = 1.0; // Full block
+                    
+                    finalColor = uColor * d;
+                } else {
+                    // Dither Mode (Ordered Dither)
+                    // Bayer Matrix 4x4
+                    vec2 fragCoord = gl_FragCoord.xy;
+                    int x = int(mod(fragCoord.x, 4.0));
+                    int y = int(mod(fragCoord.y, 4.0));
+                    
+                    float m[16];
+                    m[0]=0.0/16.0; m[1]=8.0/16.0; m[2]=2.0/16.0; m[3]=10.0/16.0;
+                    m[4]=12.0/16.0; m[5]=4.0/16.0; m[6]=14.0/16.0; m[7]=6.0/16.0;
+                    m[8]=3.0/16.0; m[9]=11.0/16.0; m[10]=1.0/16.0; m[11]=9.0/16.0;
+                    m[12]=15.0/16.0; m[13]=7.0/16.0; m[14]=13.0/16.0; m[15]=5.0/16.0;
+                    
+                    float threshold = m[x + 4*y];
+                    
+                    // Quantize
+                    float dithered = step(threshold, gray);
+                    finalColor = uColor * dithered;
+                }
+                
+                // Mix with original slightly for style
+                finalColor = mix(vec3(0.0), finalColor, uOpacity);
+                
+                gl_FragColor = vec4(finalColor, 1.0);
+            }
+        `;
+
+        // --- Init Renderer ---
+        const renderer = new UnifiedRenderer({
+            container: document.getElementById('container'),
+            type: 'shader',
+            mouseDragOnly: true,
+            fragmentShader: fragmentShader,
+            params: {
+                uIsAscii: false, // Start with Dither
+                uPixelSize: 8.0,
+                uOpacity: 1.0,
+                uColor: new THREE.Color('#00ff00'),
+                // Load a default texture
+                uTexture: { type: 'video', url: '../sample/sample1.mp4' } 
+            },
+            init: (app) => {
+                console.log('Retro Dither/ASCII Demo Initialized');
+                
+                // Load Video Texture
+                const video = document.createElement('video');
+                video.src = '../sample/sample1.mp4';
+                video.loop = true;
+                video.muted = true;
+                video.play();
+                const texture = new THREE.VideoTexture(video);
+                app.uniforms.uTexture = { value: texture };
+                
+                // Setup UI
+                app.setUI([
+                    { name: 'Mode', type: 'select', options: ['Dither', 'ASCII'], value: 'Dither', bind: 'mode_selector' },
+                    { name: 'Pixel Size', value: 8.0, min: 2.0, max: 20.0, step: 1.0, bind: 'uPixelSize' },
+                    { name: 'Opacity', value: 1.0, min: 0.0, max: 1.0, step: 0.1, bind: 'uOpacity' },
+                    { name: 'Color', type: 'color', value: '#00ff00', bind: 'uColor' }
+                ]);
+                
+                // Custom logic to handle mode switching
+                app.onParamChange = (key, val) => {
+                    if (key === 'mode_selector') {
+                        app.uniforms.uIsAscii.value = (val === 'ASCII');
+                    }
+                };
+            }
+        });
+    </script>
+</body>
+</html>

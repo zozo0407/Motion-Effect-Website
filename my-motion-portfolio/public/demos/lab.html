@@ -1,0 +1,221 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Creative Coding Lab</title>
+    <style>
+        body { margin: 0; padding: 0; overflow: hidden; background-color: #1e1e1e; font-family: sans-serif; }
+        #container { display: flex; width: 100vw; height: 100vh; }
+        #preview-pane { flex: 1; position: relative; background: #000; }
+        #editor-pane { width: 50%; display: flex; flex-direction: column; border-left: 1px solid #333; }
+        #monaco-container { flex: 1; }
+        #toolbar { 
+            height: 50px; 
+            background: #252526; 
+            display: flex; 
+            align-items: center; 
+            padding: 0 15px; 
+            justify-content: space-between;
+            border-bottom: 1px solid #333;
+        }
+        #run-btn {
+            background: #0e639c;
+            color: white;
+            border: none;
+            padding: 8px 16px;
+            cursor: pointer;
+            font-size: 14px;
+            border-radius: 4px;
+            display: flex;
+            align-items: center;
+            gap: 6px;
+        }
+        #run-btn:hover { background: #1177bb; }
+        #status-bar { color: #ccc; font-size: 12px; margin-left: 10px; }
+        
+        /* Import Map Polyfill */
+        
+    </style>
+    <!-- Import Maps Polyfill -->
+    <script async src="https://unpkg.com/es-module-shims@1.8.0/dist/es-module-shims.js"></script>
+    <script type="importmap">
+        {
+            "imports": {
+                "three": "https://unpkg.com/three@0.160.0/build/three.module.js",
+                "three/addons/": "https://unpkg.com/three@0.160.0/examples/jsm/"
+            }
+        }
+    </script>
+    <!-- Monaco Editor Loader -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/monaco-editor/0.45.0/min/vs/loader.min.js"></script>
+</head>
+<body>
+    <div id="container">
+        <div id="preview-pane"></div>
+        <div id="editor-pane">
+            <div id="toolbar">
+                <div style="display: flex; align-items: center;">
+                    <span style="color: #fff; font-weight: bold; margin-right: 20px;">🧪 Lab</span>
+                    <button id="run-btn">▶ Run Code</button>
+                    <span id="status-bar">Ready</span>
+                </div>
+                <select id="template-select" style="background: #333; color: #fff; border: none; padding: 5px;">
+                    <option value="basic">Basic Three.js</option>
+                    <option value="shader">Shader</option>
+                    <option value="p5">p5.js</option>
+                </select>
+            </div>
+            <div id="monaco-container"></div>
+        </div>
+    </div>
+
+    <script type="module">
+        import { UnifiedRenderer } from '../js/UnifiedRenderer.js';
+        import * as THREE from 'three';
+
+        // Initial Template Code
+        const TEMPLATES = {
+            basic: `// Basic Three.js Template
+new UnifiedRenderer({
+    type: 'three',
+    params: {
+        color: '#00ff88',
+        speed: 1.0
+    },
+    init: (sketch) => {
+        const { scene, params } = sketch;
+        
+        // Add lights
+        const light = new THREE.DirectionalLight(0xffffff, 1);
+        light.position.set(1, 1, 1);
+        scene.add(light);
+        scene.add(new THREE.AmbientLight(0x404040));
+
+        // Add object
+        const geometry = new THREE.TorusKnotGeometry(1, 0.3, 100, 16);
+        const material = new THREE.MeshStandardMaterial({ 
+            color: new THREE.Color(params.color),
+            roughness: 0.3,
+            metalness: 0.7
+        });
+        sketch.mesh = new THREE.Mesh(geometry, material);
+        scene.add(sketch.mesh);
+
+        // UI
+        sketch.setUI([
+            { name: 'Color', value: params.color, type: 'color', bind: 'color' },
+            { name: 'Speed', value: params.speed, min: 0, max: 5, bind: 'speed' }
+        ]);
+    },
+    update: ({ deltaTime }, sketch) => {
+        if (sketch.mesh) {
+            sketch.mesh.rotation.x += deltaTime * sketch.params.speed;
+            sketch.mesh.rotation.y += deltaTime * sketch.params.speed * 0.5;
+        }
+    },
+    onParamChange: (key, value, sketch) => {
+        if (key === 'color' && sketch.mesh) {
+            sketch.mesh.material.color.set(value);
+        }
+    }
+});`,
+            shader: `// Shader Template
+new UnifiedRenderer({
+    type: 'shader',
+    shader: \`
+        uniform float uTime;
+        varying vec2 vUv;
+        
+        void main() {
+            vec2 uv = vUv;
+            vec3 color = 0.5 + 0.5 * cos(uTime + uv.xyx + vec3(0,2,4));
+            gl_FragColor = vec4(color, 1.0);
+        }
+    \`
+});`
+        };
+
+        // --- Editor Setup ---
+        let editor;
+        let currentRenderer = null;
+
+        require.config({ paths: { 'vs': 'https://cdnjs.cloudflare.com/ajax/libs/monaco-editor/0.45.0/min/vs' }});
+        
+        require(['vs/editor/editor.main'], function() {
+            editor = monaco.editor.create(document.getElementById('monaco-container'), {
+                value: TEMPLATES.basic,
+                language: 'javascript',
+                theme: 'vs-dark',
+                automaticLayout: true,
+                minimap: { enabled: false },
+                fontSize: 14
+            });
+
+            // Run initial code
+            runCode();
+        });
+
+        // --- Execution Logic ---
+        const previewPane = document.getElementById('preview-pane');
+        const statusBar = document.getElementById('status-bar');
+
+        async function runCode() {
+            const code = editor.getValue();
+            statusBar.textContent = 'Running...';
+            statusBar.style.color = '#ccc';
+
+            // 1. Cleanup previous renderer
+            if (currentRenderer) {
+                // Assuming UnifiedRenderer has a cleanup/dispose method
+                // We might need to manually clear the DOM if it doesn't
+                previewPane.innerHTML = ''; 
+                currentRenderer = null;
+            }
+
+            // 2. Execute new code
+            try {
+                // Create a sandbox function
+                // We pass UnifiedRenderer and THREE to the function scope
+                const sandbox = new Function('UnifiedRenderer', 'THREE', code);
+                
+                // Hijack the UnifiedRenderer constructor to capture the instance
+                const ProxyUnifiedRenderer = class extends UnifiedRenderer {
+                    constructor(config) {
+                        // Force container to be our preview pane
+                        config.container = previewPane;
+                        super(config);
+                        currentRenderer = this;
+                    }
+                };
+
+                sandbox(ProxyUnifiedRenderer, THREE);
+                
+                statusBar.textContent = 'Active';
+                statusBar.style.color = '#00ff88';
+            } catch (err) {
+                console.error(err);
+                statusBar.textContent = 'Error: ' + err.message;
+                statusBar.style.color = '#ff4444';
+            }
+        }
+
+        // --- Event Listeners ---
+        document.getElementById('run-btn').addEventListener('click', runCode);
+        
+        // Ctrl+S / Cmd+S to run
+        document.addEventListener('keydown', (e) => {
+            if ((e.ctrlKey || e.metaKey) && e.key === 's') {
+                e.preventDefault();
+                runCode();
+            }
+        });
+
+        document.getElementById('template-select').addEventListener('change', (e) => {
+            const t = TEMPLATES[e.target.value];
+            if (t) editor.setValue(t);
+        });
+
+    </script>
+</body>
+</html>

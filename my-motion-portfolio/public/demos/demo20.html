@@ -1,0 +1,323 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Demo 20 - Picture Cut Landscape</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/p5.js/1.9.0/p5.min.js"></script>
+    <style>
+        body { margin: 0; overflow: hidden; background-color: #000; }
+        canvas { display: block; }
+    </style>
+</head>
+<body>
+    <script>
+        // --- Configuration & Globals ---
+        let imgs = []; 
+        let horizon; 
+        let firstTime = true; 
+
+        // --- Communication Protocol ---
+        const UI_CONFIG = [
+            { name: 'Regenerate', type: 'button', bind: 'cmd_reset', text: 'New Landscape' }
+        ];
+
+        function sendConfig() {
+            if (window.parent) {
+                window.parent.postMessage({
+                    type: 'UI_CONFIG',
+                    config: UI_CONFIG
+                }, '*');
+            }
+        }
+
+        window.addEventListener('message', (event) => {
+            const data = event.data;
+            if (!data) return;
+
+            if (data.type === 'HANDSHAKE') sendConfig();
+
+            if (data.type === 'UPDATE_PARAM') {
+                if (data.key === 'cmd_reset') {
+                    setupLandscape();
+                }
+            }
+        });
+
+        // --- p5.js Sketch ---
+
+        function preload() { 
+            // water 
+            imgs[0]=[]; 
+            imgs[0][0]=loadImage("../assets/demo20/water1.jpg");
+            imgs[0][1]=loadImage("../assets/demo20/water2.jpg");
+            imgs[0][2]=loadImage("../assets/demo20/water3.jpg");
+            
+            // iceberg 
+            imgs[1]=[]; 
+            imgs[1][0]=loadImage("../assets/demo20/iceberg1.jpg");
+            imgs[1][1]=loadImage("../assets/demo20/iceberg2.jpg");
+            imgs[1][2]=loadImage("../assets/demo20/iceberg3.jpg");
+            
+            // mountains 
+            imgs[2]=[] 
+            imgs[2][0]=loadImage("../assets/demo20/mountain1.jpg");
+            imgs[2][1]=loadImage("../assets/demo20/mountain2.jpg");
+            imgs[2][2]=loadImage("../assets/demo20/mountain3.jpg");
+            
+            // sky 
+            imgs[3]=[]; 
+            imgs[3][0]=loadImage("../assets/demo20/sky1.jpg");
+            imgs[3][1]=loadImage("../assets/demo20/sky2.jpg");
+            imgs[3][2]=loadImage("../assets/demo20/sky3.jpg");
+        } 
+        
+        function setup() { 
+            createCanvas(windowWidth, windowHeight); 
+            pixelDensity(1); 
+            
+            // crop iceberg image (only once)
+            // Note: In original code, this was in setup(). Since we might resize or re-setup, 
+            // we should be careful not to crop repeatedly if we re-call setup().
+            // But here we'll split the drawing logic from p5 setup.
+            
+            if (firstTime && imgs[1][0].width > 0) { 
+                firstTime = false; 
+                const grW = imgs[1][0].width; 
+                const grH = imgs[1][0].height; 
+                let gr = createGraphics(grW, grH); 
+                gr.image(imgs[1][0], 0, 0); 
+                imgs[1][0] = gr.get(grW * 0.1, grH * 0.25, grW * 0.8, grH * 0.5) 
+            } 
+            
+            setupLandscape();
+            sendConfig();
+        } 
+        
+        function setupLandscape() {
+            horizon = ~~random(height * 0.3, height * 0.7); 
+            drawLandscape(); 
+        }
+
+        function mousePressed() { 
+            if (mouseButton === LEFT) setupLandscape(); 
+        } 
+        
+        function drawLandscape() { 
+            background(0); // Clear background
+            strokeWeight(height * 0.01) 
+            
+            // sky 
+            drawSky(random(imgs[3])) 
+        
+            // Mountains 
+            const numMountains = random(3) + 1; 
+            let imgMountain = random(imgs[2]); 
+            for (let i = 0; i < numMountains; i++) drawMountain(imgMountain) 
+            
+            // water 
+            drawWater(random(imgs[0])) 
+            
+            // horizon 
+            stroke(255) 
+            line(0, horizon, width, horizon) 
+            
+            // icebergs: order by y 
+            const numIcebergs = random(3) + 1; 
+            { 
+                let arrIcebergs = [];	 
+                for (let i = 0; i < numIcebergs; i++) arrIcebergs.push(~~random(height * 0.7, height * 1.1)); 
+                arrIcebergs = arrIcebergs.sort((a, b) => a - b); 
+                let imgIceBerg = random(imgs[1]); 
+                for (let i = 0; i < numIcebergs; i++) drawIceberg(imgIceBerg, arrIcebergs[i]); 
+            } 
+        
+            // noLoop(); // We are not looping anyway by default in p5 unless draw is called. 
+            // But since we are drawing once per trigger, this is fine.
+        } 
+        
+        function drawWater(img) { 
+            const wH = height - horizon; 
+            const imgWaterY = random(img.height * 0.3, img.height - wH); 
+            // Ensure source dimensions are valid
+            if (img.width > 0 && img.height > 0) {
+                image(img, 
+                            0, horizon, width, wH, 
+                            0, imgWaterY, width, wH 
+                ); 
+            }
+        } 
+        
+        function drawSky(img) { 
+            const sH = horizon; 
+            const imgSkyY = ~~random(0, img.height - sH); 
+            const imgSkyH = height - horizon; 
+            const imgSkyW = width; 
+            const imgSkyX = ~~random(0, img.width - width) 
+            
+            if (img.width > 0 && img.height > 0) {
+                // p5 image() with 8 args: dx, dy, dWidth, dHeight, sx, sy, sWidth, sHeight
+                // Note: Ensure source region is within bounds to avoid errors
+                let safeSy = constrain(imgSkyY, 0, img.height - sH);
+                let safeSx = constrain(imgSkyX, 0, img.width - width);
+                
+                // If image is smaller than canvas, just stretch it or tile it?
+                // The original code assumes large images. 
+                // We'll try to just draw what we can.
+                image(img, 
+                            0, 0, width, horizon, 
+                            0, 0, img.width, horizon * (img.height/height) // Approximate mapping if simple
+                            // Let's stick to original logic but be careful
+                );
+                
+                // Original logic:
+                // image(img, 0, 0, width, horizon, imgSkyX, imgSkyY, width, sH);
+                // If img.width < width, imgSkyX negative? 
+                // random(0, negative) -> 0.
+                
+                // Let's just draw the image covering the sky area
+                image(img, 0, 0, width, horizon, 0, 0, img.width, img.height * (horizon/height) * 2); 
+            }
+        } 
+        
+        function drawIceberg(img, iceY) { 
+            if (img.width === 0) return;
+            
+            const iceW = min(img.width, ~~random(width * 0.2, width * 0.4)); 
+            const iceH = min(img.height, ~~random(height * 0.3, height * 0.5)); 
+            const iceX = ~~random(width * -0.1, width * 0.9) 
+            // const iceY = ~~random(height * 0.7, height * 1.1); 
+            const iceM = iceX + iceW / 2; 
+            // rect(x, y-h, w, h); 
+            
+            const maskArr = []; 
+            maskArr.push({x: iceX, y: iceY}) 
+            let x = iceX; 
+            while (x < iceX + iceW) { 
+                x += random(10, iceW * 0.1); 
+                const d = easeInOutSine(1 - abs(iceM - x) / (iceW / 2)); 
+                maskArr.push({x, y: min(iceY, iceY - iceH * d + random(iceH * -0.05, iceH * 0.1))}) 
+            } 
+            maskArr.push({x: iceX + iceW, y: iceY}) 
+            
+            push() 
+            noStroke(); 
+            // fill(255, 0, 0) // just the mask 
+            
+            // Clipping in p5.js instance mode or global?
+            // p5.js has beginClip() endClip() in newer versions? 
+            // Check p5 version. CDN is 1.9.0. It supports drawingContext.clip().
+            // The user code uses beginClip() endClip() which might be from a library or newer p5.
+            // p5 1.9.0 supports drawingContext.clip().
+            // Let's adapt to standard canvas clipping context.
+            
+            drawingContext.save();
+            drawingContext.beginPath();
+            if (maskArr.length > 0) {
+                drawingContext.moveTo(maskArr[0].x, maskArr[0].y);
+                for (let i = 1; i < maskArr.length; i++) {
+                    drawingContext.lineTo(maskArr[i].x, maskArr[i].y);
+                }
+            }
+            drawingContext.closePath();
+            drawingContext.clip();
+            
+            // draw iceberg 
+            tint(random() < 0.15 ? random(64, 128) : random(192, 256), 255); 
+            
+            // Random source rect
+            let sx = random(img.width - iceW);
+            let sy = random(img.height - iceH);
+            sx = constrain(sx, 0, img.width);
+            sy = constrain(sy, 0, img.height);
+            
+            image(img, iceX, iceY - iceH, iceW, iceH, sx, sy, iceW, iceH);
+            
+            drawingContext.restore();
+            
+            // draw Outline 
+            noFill(); 
+            strokeWeight(height * 0.02) 
+            stroke(255); 
+            beginShape(); 
+            for	(let p of maskArr) { 
+                vertex(p.x, p.y) 
+            } 
+            endShape() 
+            pop() 
+        } 
+        
+        function drawMountain(img) { 
+            if (img.width === 0) return;
+            
+            const mtnW = width; 
+            const mtnH = ~~random(horizon * 0.4, horizon); 
+            const mtnX = -40 
+            const mtnY = horizon; 
+            
+            const maskArr = []; 
+            maskArr.push({x: mtnX, y: mtnY}) 
+            let x = mtnX; 
+            while (x < mtnX + mtnW) { 
+                x += random(10, mtnW * 0.1); 
+                const n = noise(x, x*0.1233 + 2.1234); 
+                maskArr.push({x, y: mtnY - n*mtnH}) 
+            } 
+            maskArr.push({x: width, y: mtnY}) 
+            
+            push() 
+            noStroke(); 
+            
+            drawingContext.save();
+            drawingContext.beginPath();
+            if (maskArr.length > 0) {
+                drawingContext.moveTo(maskArr[0].x, maskArr[0].y);
+                for (let i = 1; i < maskArr.length; i++) {
+                    drawingContext.lineTo(maskArr[i].x, maskArr[i].y);
+                }
+            }
+            drawingContext.closePath();
+            drawingContext.clip();
+            
+            // draw mountain 
+            tint(random() < 0.5 ? random(64, 128) : random(192, 256), 255); 
+            
+            let sx = random(img.width - mtnW);
+            let sy = random(img.height - mtnH);
+            // Ensure valid source
+            if (sx < 0) sx = 0;
+            if (sy < 0) sy = 0;
+            
+            // If image is smaller than screen width, stretch it
+            if (img.width < mtnW) {
+                 image(img, mtnX, mtnY - mtnH, mtnW, mtnH);
+            } else {
+                 image(img, mtnX, mtnY - mtnH, mtnW, mtnH, sx, sy, mtnW, mtnH);
+            }
+            
+            drawingContext.restore();
+            
+            // draw Outline 
+            noFill(); 
+            strokeWeight(height * 0.02) 
+            stroke(255); 
+            beginShape(); 
+            for	(let p of maskArr) { 
+                vertex(p.x, p.y) 
+            } 
+            endShape() 
+            pop() 
+        } 
+        
+        // `https://easings.net/#easeInOutSine` 
+        function easeInOutSine(x)  { 
+            return -(Math.cos(Math.PI * x) - 1) / 2; 
+        }
+
+        function windowResized() {
+            resizeCanvas(windowWidth, windowHeight);
+            setupLandscape();
+        }
+    </script>
+</body>
+</html>

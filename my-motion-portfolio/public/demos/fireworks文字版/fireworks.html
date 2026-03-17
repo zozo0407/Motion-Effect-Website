@@ -1,0 +1,837 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Text Fireworks Animation</title>
+    <style>
+        body {
+            margin: 0;
+            overflow: hidden;
+            /* background-color: #1a0505; */
+            background-image: url('image/bg.jpg'); 
+            background-size: cover;
+            background-position: center;
+            background-repeat: no-repeat;
+        }
+        #bg-overlay {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background-image: url('image/black.png');
+            background-size: cover;
+            background-position: center;
+            background-repeat: no-repeat;
+            mix-blend-mode: multiply;
+            pointer-events: none;
+            z-index: -1;
+            opacity: 0;
+            transition: opacity 0.1s ease-out; /* Add smooth transition */
+        }
+        canvas {
+            display: block;
+        }
+    </style>
+    <script async src="https://unpkg.com/es-module-shims@1.8.0/dist/es-module-shims.js"></script>
+    <script type="importmap">
+        {
+            "imports": {
+                "three": "https://unpkg.com/three@0.160.0/build/three.module.js",
+                "three/addons/": "https://unpkg.com/three@0.160.0/examples/jsm/"
+            }
+        }
+    </script>
+</head>
+<body>
+    <div id="bg-overlay"></div>
+    <div id="container"></div>
+    
+    <!-- 
+        ========================================
+        SHADERS
+        ========================================
+    -->
+
+    <!-- 1. MAIN PARTICLE SHADERS (For Rings) -->
+    <script type="x-shader/x-vertex" id="vertexshader">
+        uniform float uTime;
+        uniform float uDuration;
+        uniform float uGlobalScale; 
+        uniform float uSizeScale; // New uniform for size scaling
+        
+        attribute vec3 aTargetPos;
+        attribute float aSize;
+        attribute float aRotation;
+        attribute float aRingIndex;
+
+        varying float vAlpha;
+        varying float vRotation;
+        varying float vLife;
+
+        float easeOutQuad(float t) {
+            return 1.0 - (1.0 - t) * (1.0 - t);
+        }
+
+        void main() {
+            vRotation = aRotation;
+
+            float time = mod(uTime, uDuration);
+            
+            // Animation Phases with overlap
+            float explosionProgress = smoothstep(0.0, 0.5, time); 
+            float driftProgress = smoothstep(0.3, 1.0, time);
+            
+            float currentProgress = easeOutQuad(explosionProgress);
+            
+            // Movement
+            vec3 pos = mix(vec3(0.0), aTargetPos * uGlobalScale, currentProgress);
+            
+            // Drift: outward + slightly down
+            pos += normalize(aTargetPos) * driftProgress * 2.0;
+            pos.y -= driftProgress * driftProgress * 5.0; 
+
+            vec4 mvPosition = modelViewMatrix * vec4(pos, 1.0);
+            
+            // Apply Global Scale to Point Size
+            gl_PointSize = aSize * uGlobalScale * uSizeScale * (300.0 / -mvPosition.z);
+            
+            // Opacity Control
+            float fadeIn = smoothstep(0.0, 0.1, time);
+            
+            // Ring-based fade out (50%-100%)
+            float fadeOut = 1.0;
+            if (aRingIndex < 4.0) {
+                // Inner rings (0-3): start at 50%-70%, each takes 20%
+                float ringFadeStart = 0.50 + aRingIndex * 0.05;
+                float ringFadeEnd = ringFadeStart + 0.20;
+                fadeOut = 1.0 - smoothstep(ringFadeStart, ringFadeEnd, time);
+            } else {
+                // Outermost ring (4): 70%-100%
+                fadeOut = 1.0 - smoothstep(0.70, 1.0, time);
+            }
+            
+            vAlpha = fadeIn * fadeOut;
+            vLife = time / uDuration; 
+
+            gl_Position = projectionMatrix * mvPosition;
+        }
+    </script>
+
+    <script type="x-shader/x-fragment" id="fragmentshader">
+        uniform sampler2D uTexture;
+        uniform vec3 uColor; // Uniform color for the whole ring
+        uniform float uOpacityMultiplier;
+        uniform vec3 uGlobalTint;
+        uniform float uGlowIntensity;
+        uniform bool uIsGlow; // Toggle for glow rendering
+        
+        varying float vAlpha;
+        varying float vRotation;
+        varying float vLife;
+
+        vec2 rotate(vec2 uv, float rotation, vec2 center) {
+            return vec2(
+                cos(rotation) * (uv.x - center.x) + sin(rotation) * (uv.y - center.y) + center.x,
+                cos(rotation) * (uv.y - center.y) - sin(rotation) * (uv.x - center.x) + center.y
+            );
+        }
+
+        void main() {
+            vec2 uv = gl_PointCoord;
+            uv.y = 1.0 - uv.y;
+            
+            vec4 texColor;
+            
+            if (uIsGlow) {
+                // For glow, draw a soft radial gradient instead of the texture
+                vec2 center = vec2(0.5, 0.5);
+                float dist = length(gl_PointCoord - center);
+                if (dist > 0.5) discard;
+                
+                // Soft exponential falloff
+                 float glowAlpha = 1.0 - smoothstep(0.0, 0.5, dist);
+                 glowAlpha = pow(glowAlpha, 3.0); 
+                 
+                 texColor = vec4(1.0, 1.0, 1.0, glowAlpha);
+            } else {
+                vec2 rotatedUV = rotate(uv, vRotation, vec2(0.5));
+                texColor = texture2D(uTexture, rotatedUV);
+                if (texColor.a < 0.1) discard;
+            }
+
+            // Final Color Calculation
+            vec3 finalColor = uColor * uGlobalTint * uGlowIntensity;
+
+            gl_FragColor = vec4(finalColor, vAlpha * texColor.a * uOpacityMultiplier);
+        }
+    </script>
+
+    <!-- 2. SPARKLE SHADERS (For Twinkling Particles) -->
+    <script type="x-shader/x-vertex" id="sparkles-vertex">
+        uniform float uTime;
+        uniform float uDuration;
+        uniform float uGlobalScale; 
+        uniform vec3 uColorInner;
+        uniform vec3 uColorOuter;
+
+        attribute vec3 aTargetPos;
+        attribute float aSize;
+        attribute float aRandom;
+        attribute float aMixFactor; 
+
+        varying float vAlpha;
+        varying vec3 vColor;
+
+        float easeOutQuad(float t) {
+            return 1.0 - (1.0 - t) * (1.0 - t);
+        }
+
+        void main() {
+            // Determine color based on mix factor
+            vColor = mix(uColorInner, uColorOuter, aMixFactor);
+
+            float time = mod(uTime, uDuration);
+            
+            float explosionProgress = smoothstep(0.0, 0.5, time); 
+            float driftProgress = smoothstep(0.3, 1.0, time);
+            
+            float currentProgress = easeOutQuad(explosionProgress);
+            
+            vec3 pos = mix(vec3(0.0), aTargetPos * uGlobalScale, currentProgress);
+            pos += normalize(aTargetPos) * driftProgress * 5.0; 
+            pos.y -= driftProgress * driftProgress * 8.0; 
+
+            vec4 mvPosition = modelViewMatrix * vec4(pos, 1.0);
+            
+            float twinkle = 0.5 + 0.5 * sin(uTime * 15.0 + aRandom);
+            float sizeScale = (0.5 + twinkle) * 0.7; 
+            
+            gl_PointSize = aSize * sizeScale * uGlobalScale * (300.0 / -mvPosition.z);
+            
+            float fadeIn = smoothstep(0.0, 0.1, time);
+            float fadeOut = 1.0 - smoothstep(0.70, 1.0, time);
+            vAlpha = fadeIn * fadeOut;
+
+            gl_Position = projectionMatrix * mvPosition;
+        }
+    </script>
+
+    <script type="x-shader/x-fragment" id="sparkles-fragment">
+        uniform vec3 uGlobalTint;
+        uniform float uGlowIntensity;
+        varying float vAlpha;
+        varying vec3 vColor;
+
+        void main() {
+            vec2 uv = gl_PointCoord - 0.5;
+            float dist = length(uv);
+            if (dist > 0.5) discard;
+            
+            float alpha = 1.0 - smoothstep(0.3, 0.5, dist);
+            gl_FragColor = vec4(vColor * uGlobalTint * uGlowIntensity, vAlpha * alpha);
+        }
+    </script>
+
+    <!-- 3. LAUNCH TEXT SHADERS -->
+    <script type="x-shader/x-vertex" id="text-vertex">
+        attribute float aSize;
+        attribute vec3 aColor;
+        varying vec3 vColor;
+        varying float vIndex;
+        uniform float uScale; 
+        uniform float uGlobalScale; 
+        uniform float uSizeScale;
+
+        void main() {
+            vColor = aColor;
+            vIndex = float(gl_VertexID); 
+            
+            // Apply scale to position to shrink the distance between texts
+            vec4 scaledPosition = vec4(position * uScale*1.5, 1.0);
+            vec4 mvPosition = modelViewMatrix * scaledPosition;
+            
+            gl_PointSize = aSize * uScale * (uGlobalScale * 0.6) * uSizeScale * (300.0 / -mvPosition.z);
+            
+            gl_Position = projectionMatrix * mvPosition;
+        }
+    </script>
+
+    <script type="x-shader/x-fragment" id="text-fragment">
+        uniform sampler2D uTextureYan;
+        uniform sampler2D uTextureHua;
+        uniform float uOpacity;
+        uniform vec3 uGlobalTint;
+        uniform float uGlowIntensity;
+        uniform bool uIsGlow; // Toggle for glow rendering
+        varying vec3 vColor;
+        varying float vIndex;
+        void main() {
+            vec2 uv = gl_PointCoord;
+            uv.y = 1.0 - uv.y; 
+            
+            vec4 texColor;
+            
+            if (uIsGlow) {
+                // For glow, draw a soft radial gradient instead of the texture
+                vec2 center = vec2(0.5, 0.5);
+                float dist = length(gl_PointCoord - center);
+                if (dist > 0.5) discard;
+                
+                // Soft exponential falloff (matching particle glow)
+                float glowAlpha = 1.0 - smoothstep(0.0, 0.5, dist);
+                glowAlpha = pow(glowAlpha, 3.0); 
+                
+                texColor = vec4(1.0, 1.0, 1.0, glowAlpha);
+            } else {
+                if (vIndex < 0.5) {
+                    texColor = texture2D(uTextureYan, uv);
+                } else {
+                    texColor = texture2D(uTextureHua, uv);
+                }
+                
+                if (texColor.a < 0.1) discard;
+            }
+
+            gl_FragColor = vec4(vColor * uGlobalTint * uGlowIntensity, texColor.a * uOpacity);
+        }
+    </script>
+
+    <script type="module">
+        import * as THREE from 'three';
+        import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';
+        import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
+        import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
+        import { UnifiedRenderer } from '../../js/UnifiedRenderer.js';
+
+        // =========================================================================
+        // UI CONFIGURATION
+        // =========================================================================
+        const UI_CONFIG = [
+            { name: '爆炸大小', value: 0.7, min: 0.5, max: 1.0, step: 0.1, bind: 'scale' },
+            { name: '速度', value: 1.0, min: 0.5, max: 2.0, step: 0.1, bind: 'speed' },
+            { name: '频率', value: 3, min: 1, max: 4, step: 1, bind: 'concurrency' },
+            { name: '色彩倾向', value: 0.0, min: -0.25, max: 0.25, step: 0.05, bind: 'colorShift' },
+            { name: '爆炸高度', value: 75, min: 50, max: 85, step: 1, bind: 'explosionHeight' }
+        ];
+
+        // --- Global Configuration ---
+        const config = {
+            glowIntensity: 2.5,
+            launchInterval: 4.0,
+            speed: 1.0,
+            globalScale: 0.7,
+            concurrency: 3,
+            colorShift: 0.0,
+            explosionHeight: 75,
+            userScale: 0.7
+        };
+
+        let scene, camera, renderer, composer;
+        let fireworks = [];
+        let clock;
+        let totalElapsedTime = 0;
+        let nextLaunchTime = 0;
+        let lastLaunchX = null;
+        let globalTint;
+        
+        // Textures
+        let textureYan, textureHua, textureFu, textureYun, textureFa, textureCai, textureJi, textureXiang;
+
+        // Assets
+        function createTextTexture(text, color = 'white', font = 'bold 256px Arial') {
+            const canvas = document.createElement('canvas');
+            canvas.width = 512;
+            canvas.height = 512;
+            const ctx = canvas.getContext('2d');
+            
+            ctx.fillStyle = color;
+            ctx.font = font;
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'middle';
+            
+            ctx.shadowColor = 'white';
+            ctx.shadowBlur = 10;
+            
+            ctx.fillText(text, 256, 256);
+            
+            const texture = new THREE.CanvasTexture(canvas);
+            texture.needsUpdate = true;
+            return texture;
+        }
+
+        // Helpers
+        function createParticleMaterial(texture, opacity, blending = THREE.NormalBlending, sizeScale = 1.0, isGlow = false) {
+            return new THREE.ShaderMaterial({
+                uniforms: {
+                    uTime: { value: 0 },
+                    uDuration: { value: 0 },
+                    uTexture: { value: texture }, 
+                    uOpacityMultiplier: { value: opacity },
+                    uGlobalTint: { value: globalTint },
+                    uGlowIntensity: { value: config.glowIntensity },
+                    uGlobalScale: { value: config.globalScale },
+                    uSizeScale: { value: sizeScale },
+                    uIsGlow: { value: isGlow },
+                    uColor: { value: new THREE.Color(0xffffff) } 
+                },
+                vertexShader: document.getElementById('vertexshader').textContent,
+                fragmentShader: document.getElementById('fragmentshader').textContent,
+                transparent: true,
+                depthWrite: false,
+                blending: blending
+            });
+        }
+
+        function createRingLayer(radius, count, size, opacity, textureYan, textureHua, ringIndex) {
+            const geometryYan = new THREE.BufferGeometry();
+            const geometryHua = new THREE.BufferGeometry();
+            
+            const scaledRadius = radius; 
+            const positionsYan = [], targetPosYan = [], sizesYan = [], rotationsYan = [], ringIndicesYan = [];
+            const positionsHua = [], targetPosHua = [], sizesHua = [], rotationsHua = [], ringIndicesHua = [];
+
+            for (let i = 0; i < count; i++) {
+                const angle = (i / count) * Math.PI * 2;
+                const x = scaledRadius * Math.cos(angle);
+                const y = scaledRadius * Math.sin(angle);
+                const z = 0;
+                const rotation = angle - Math.PI / 2; 
+
+                if (i % 2 === 0) {
+                    positionsYan.push(0, 0, 0); targetPosYan.push(x, y, z); sizesYan.push(size); rotationsYan.push(rotation); ringIndicesYan.push(ringIndex);
+                } else {
+                    positionsHua.push(0, 0, 0); targetPosHua.push(x, y, z); sizesHua.push(size); rotationsHua.push(rotation); ringIndicesHua.push(ringIndex);
+                }
+            }
+
+            geometryYan.setAttribute('position', new THREE.Float32BufferAttribute(positionsYan, 3));
+            geometryYan.setAttribute('aTargetPos', new THREE.Float32BufferAttribute(targetPosYan, 3));
+            geometryYan.setAttribute('aSize', new THREE.Float32BufferAttribute(sizesYan, 1));
+            geometryYan.setAttribute('aRotation', new THREE.Float32BufferAttribute(rotationsYan, 1));
+            geometryYan.setAttribute('aRingIndex', new THREE.Float32BufferAttribute(ringIndicesYan, 1));
+
+            geometryHua.setAttribute('position', new THREE.Float32BufferAttribute(positionsHua, 3));
+            geometryHua.setAttribute('aTargetPos', new THREE.Float32BufferAttribute(targetPosHua, 3));
+            geometryHua.setAttribute('aSize', new THREE.Float32BufferAttribute(sizesHua, 1));
+            geometryHua.setAttribute('aRotation', new THREE.Float32BufferAttribute(rotationsHua, 1));
+            geometryHua.setAttribute('aRingIndex', new THREE.Float32BufferAttribute(ringIndicesHua, 1));
+
+            const materialYan = createParticleMaterial(textureYan, opacity, THREE.NormalBlending, 1.5, false);
+            const materialHua = createParticleMaterial(textureHua, opacity, THREE.NormalBlending, 1.5, false);
+
+            const group = new THREE.Group();
+            const glowOpacity = 0.3; 
+            const glowSize = 2.7;    
+            
+            const glowMaterialYan = createParticleMaterial(textureYan, glowOpacity, THREE.AdditiveBlending, glowSize, true);
+            const glowMaterialHua = createParticleMaterial(textureHua, glowOpacity, THREE.AdditiveBlending, glowSize, true);
+            
+            group.add(new THREE.Points(geometryYan, glowMaterialYan));
+            group.add(new THREE.Points(geometryHua, glowMaterialHua));
+            group.add(new THREE.Points(geometryYan, materialYan));
+            group.add(new THREE.Points(geometryHua, materialHua));
+            
+            return group;
+        }
+
+        function createSparkles(count, radius) {
+             const geometry = new THREE.BufferGeometry();
+             const positions = [], targetPositions = [], sizes = [], randoms = [], mixFactors = [];
+    
+             for (let i = 0; i < count; i++) {
+                 positions.push(0, 0, 0); 
+                 const r = radius * Math.pow(Math.random(), 1/3); 
+                 const theta = Math.random() * Math.PI * 2;
+                 const phi = Math.acos(2 * Math.random() - 1);
+                 const x = r * Math.sin(phi) * Math.cos(theta);
+                 const y = r * Math.sin(phi) * Math.sin(theta);
+                 const z = r * Math.cos(phi);
+                 targetPositions.push(x, y, z);
+                 sizes.push(2.0 + Math.random() * 2.0); 
+                 randoms.push(Math.random() * 100.0);
+                 mixFactors.push(Math.random() > 0.5 ? 1.0 : 0.0);
+             }
+    
+             geometry.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
+             geometry.setAttribute('aTargetPos', new THREE.Float32BufferAttribute(targetPositions, 3));
+             geometry.setAttribute('aSize', new THREE.Float32BufferAttribute(sizes, 1));
+             geometry.setAttribute('aRandom', new THREE.Float32BufferAttribute(randoms, 1));
+             geometry.setAttribute('aMixFactor', new THREE.Float32BufferAttribute(mixFactors, 1));
+    
+             const material = new THREE.ShaderMaterial({
+                 uniforms: {
+                     uTime: { value: 0 },
+                     uDuration: { value: 0 },
+                     uColorInner: { value: new THREE.Color(0xffffff) },
+                     uColorOuter: { value: new THREE.Color(0xffffff) },
+                     uGlobalTint: { value: globalTint },
+                     uGlowIntensity: { value: config.glowIntensity }, 
+                     uGlobalScale: { value: config.globalScale } 
+                 },
+                 vertexShader: document.getElementById('sparkles-vertex').textContent,
+                 fragmentShader: document.getElementById('sparkles-fragment').textContent,
+                 transparent: true,
+                 depthWrite: false,
+                 blending: THREE.NormalBlending
+             });
+             return new THREE.Points(geometry, material);
+        }
+
+        function createLaunchText() {
+             const geometry = new THREE.BufferGeometry();
+             const positions = [0, 3, 0,  0, -3, 0]; 
+             const sizes = [30, 30]; 
+             const colors = [];
+             const color = new THREE.Color(0xffffff);
+             for(let i=0; i<2; i++) colors.push(color.r, color.g, color.b);
+    
+             geometry.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
+             geometry.setAttribute('aSize', new THREE.Float32BufferAttribute(sizes, 1));
+             geometry.setAttribute('aColor', new THREE.Float32BufferAttribute(colors, 3));
+             
+             const material = new THREE.ShaderMaterial({
+                 uniforms: {
+                     uTextureYan: { value: textureYan },
+                     uTextureHua: { value: textureHua },
+                     uOpacity: { value: 1.0 },
+                     uGlobalTint: { value: globalTint },
+                     uScale: { value: 1.0 },
+                     uGlobalScale: { value: config.globalScale }, 
+                     uSizeScale: { value: 1.5 },
+                     uGlowIntensity: { value: config.glowIntensity },
+                     uIsGlow: { value: false },
+                     uColor: { value: new THREE.Color(0xffffff) } 
+                 },
+                 vertexShader: document.getElementById('text-vertex').textContent,
+                 fragmentShader: document.getElementById('text-fragment').textContent,
+                 transparent: true,
+                 depthWrite: false,
+                 blending: THREE.NormalBlending
+             });
+             
+             const glowMaterial = new THREE.ShaderMaterial({
+                 uniforms: {
+                     uTextureYan: { value: textureYan },
+                     uTextureHua: { value: textureHua },
+                     uOpacity: { value: 0.3 },
+                     uGlobalTint: { value: globalTint },
+                     uScale: { value: 1.0 },
+                     uGlobalScale: { value: config.globalScale }, 
+                     uSizeScale: { value: 2.7 },
+                     uGlowIntensity: { value: config.glowIntensity },
+                     uIsGlow: { value: true },
+                     uColor: { value: new THREE.Color(0xffffff) } 
+                 },
+                 vertexShader: document.getElementById('text-vertex').textContent,
+                 fragmentShader: document.getElementById('text-fragment').textContent,
+                 transparent: true,
+                 depthWrite: false,
+                 blending: THREE.AdditiveBlending
+             });
+              
+              const group = new THREE.Group();
+              group.add(new THREE.Points(geometry, glowMaterial));
+              group.add(new THREE.Points(geometry, material));
+              return group;
+        }
+
+        const fixedColors = [
+            new THREE.Color(0xc30b03), new THREE.Color(0xff7f00), new THREE.Color(0xf2be45)
+        ];
+        let fireworkCount = 0;
+        let colorOrder = [];
+        
+        function shuffleArray(array) {
+            for (let i = array.length - 1; i > 0; i--) {
+                const j = Math.floor(Math.random() * (i + 1));
+                [array[i], array[j]] = [array[j], array[i]];
+            }
+        }
+
+        class Firework {
+             constructor(scene) {
+                 this.scene = scene;
+                 this.explosionGroup = new THREE.Group();
+                
+                this.explosionGroup.add(createRingLayer(5, 12, 10, 1.0, textureYan, textureHua, 0));
+                this.explosionGroup.add(createRingLayer(8, 36, 7, 1.0, textureYan, textureHua, 1));
+                this.explosionGroup.add(createRingLayer(12, 18, 15, 1, textureYan, textureHua, 2));
+                this.explosionGroup.add(createRingLayer(16, 45, 10, 1, textureYan, textureHua, 3));
+                this.explosionGroup.add(createRingLayer(21, 16, 22, 0.9, textureYan, textureHua, 4));
+                 
+                 this.explosionGroup.add(createSparkles(25, 20)); 
+                 
+                 this.scene.add(this.explosionGroup);
+                 this.explosionGroup.visible = false;
+
+                 this.launchText = createLaunchText();
+                 this.scene.add(this.launchText);
+                 this.launchText.visible = false; 
+
+                 this.isActive = false;
+                this.startTime = 0;
+                this.isExploded = false;
+                this.explosionStartTime = 0;
+                this.launchDuration = 0.5;
+                this.explosionDuration = 3.5;
+                this.targetY = 0; 
+             }
+
+             reset(startTime, offset = 0) {
+                 this.isActive = true;
+                 this.startTime = startTime + offset;
+                 this.isExploded = false;
+                 
+                 if (fireworkCount % 4 === 0) {
+                     colorOrder = [0, 1, 2, 3];
+                     shuffleArray(colorOrder);
+                 }
+                 
+                 this.launchText.visible = true;
+                 this.explosionGroup.visible = false;
+
+                 const currentX = (Math.random() - 0.5) * 40;
+                 this.launchText.position.x = currentX;
+                 this.explosionGroup.position.x = currentX;
+
+                 const minPercent = config.explosionHeight / 100.0;
+                 const maxPercent = 0.95;
+                 const minY = (minPercent - 0.5) * 60.0;
+                 const maxY = (maxPercent - 0.5) * 60.0;
+                 
+                 this.targetY = minY + Math.random() * (maxY - minY);
+                this.explosionGroup.position.y = this.targetY;
+                
+                this.explosionDuration = 3.5;
+                
+                let currentTextureYan, currentTextureHua;
+                const currentIndex = colorOrder[fireworkCount % 4];
+                
+                if (currentIndex === 0) { currentTextureYan = textureYan; currentTextureHua = textureHua; }
+                else if (currentIndex === 1) { currentTextureYan = textureFu; currentTextureHua = textureYun; }
+                else if (currentIndex === 2) { currentTextureYan = textureFa; currentTextureHua = textureCai; }
+                else { currentTextureYan = textureJi; currentTextureHua = textureXiang; }
+                
+                 const randomFactor = 0.85 + Math.random() * 0.3;
+                 const finalScale = config.userScale * randomFactor;
+                 
+                const colorIndex = currentIndex % 3;
+                const randomColor = fixedColors[colorIndex];
+                fireworkCount++;
+                const hsl = {};
+                randomColor.getHSL(hsl);
+                hsl.h = (hsl.h + config.colorShift) % 1.0;
+                const shiftedColor = new THREE.Color().setHSL(hsl.h, hsl.s, hsl.l);
+                
+                const colorInner = new THREE.Color(0xffffff);
+                const colorOuter = shiftedColor;
+                 
+                 const getMixedColor = (t) => colorInner.clone().lerp(colorOuter, t);
+                 const ringColors = [colorInner, colorInner, getMixedColor(0.4), getMixedColor(0.7), colorOuter, colorInner];
+                 
+                 this.explosionGroup.children.forEach((child, index) => {
+                     if (index < 5) { 
+                         child.children.forEach((points, pointIndex) => {
+                             if (points.material && points.material.uniforms) {
+                                 points.material.uniforms.uColor.value.copy(ringColors[index]);
+                                 points.material.uniforms.uGlobalScale.value = finalScale;
+                                 const isYan = pointIndex % 2 === 0;
+                                 points.material.uniforms.uTexture.value = isYan ? currentTextureYan : currentTextureHua;
+                             }
+                         });
+                     } else if (index === 5) { 
+                         if (child.material && child.material.uniforms) {
+                             child.material.uniforms.uGlobalScale.value = finalScale;
+                             child.material.uniforms.uColorInner.value.copy(colorInner);
+                             child.material.uniforms.uColorOuter.value.copy(colorInner);
+                         }
+                     }
+                 });
+                 
+                 this.launchText.children.forEach(child => {
+                    if (child.material && child.material.uniforms && child.material.uniforms.uGlobalScale) {
+                        child.material.uniforms.uGlobalScale.value = finalScale;
+                    }
+                 });
+
+                 this.launchText.scale.set(1.0, 1.0, 1.0);
+                 this.launchText.children.forEach(child => {
+                     if (child.material && child.material.uniforms && child.material.uniforms.uScale) {
+                         child.material.uniforms.uScale.value = 1.0;
+                     }
+                 });
+                 this.explosionGroup.scale.set(1.0, 1.0, 1.0);
+             }
+
+             update(totalElapsedTime) {
+                 if (!this.isActive) return;
+                 const elapsedTime = totalElapsedTime - this.startTime;
+                 if (elapsedTime < 0) return; 
+
+                 if (!this.isExploded) {
+                     if (elapsedTime < this.launchDuration) {
+                         const t = elapsedTime / this.launchDuration;
+                         const easeT = 1.0 - Math.pow(1.0 - t, 3.0);
+                         const startY = -40;
+                         this.launchText.position.y = startY + easeT * (this.targetY - startY);
+                         let scale = 1.0;
+                        if (t < 0.8) { scale = 1.0 - (t / 0.8) * 0.6; } 
+                        else { scale = 0.4; }
+                         this.launchText.scale.set(scale, scale, scale);
+                         this.launchText.children.forEach(child => {
+                             if (child.material && child.material.uniforms && child.material.uniforms.uScale) {
+                                 child.material.uniforms.uScale.value = scale;
+                             }
+                         });
+                     } else {
+                         this.isExploded = true;
+                         this.launchText.visible = false;
+                         this.explosionGroup.visible = true;
+                         this.explosionStartTime = totalElapsedTime;
+                     }
+                 } else {
+                     const explosionTime = totalElapsedTime - this.explosionStartTime;
+                     this.explosionGroup.traverse((object) => {
+                         if (object.isPoints && object.material.uniforms && object.material.uniforms.uTime) {
+                             object.material.uniforms.uTime.value = explosionTime;
+                             object.material.uniforms.uDuration.value = this.explosionDuration;
+                         }
+                     });
+                     this.explosionGroup.rotation.z = explosionTime * 0.05;
+                 }
+             }
+        }
+
+        new UnifiedRenderer({
+            type: 'three',
+            init: (r) => {
+                scene = r.scene;
+                camera = r.camera;
+                renderer = r.renderer;
+                
+                // Allow CSS Background
+                scene.background = null; 
+                scene.fog = new THREE.FogExp2(0x1a0505, 0.02);
+                
+                // Camera setup
+                camera.position.z = 40;
+                
+                // Init Textures
+                textureYan = createTextTexture('烟');
+                textureHua = createTextTexture('花');
+                textureFu = createTextTexture('福');
+                textureYun = createTextTexture('运');
+                textureFa = createTextTexture('发');
+                textureCai = createTextTexture('财');
+                textureJi = createTextTexture('吉');
+                textureXiang = createTextTexture('祥');
+                globalTint = new THREE.Color(0xffffff);
+                
+                // Init Fireworks
+                for(let i=0; i<20; i++) {
+                     fireworks.push(new Firework(scene));
+                }
+                
+                clock = new THREE.Clock();
+                
+                // Post Processing
+                const renderScene = new RenderPass(scene, camera);
+                const bloomPass = new UnrealBloomPass(
+                    new THREE.Vector2(window.innerWidth, window.innerHeight), 
+                    0, 0, 0
+                );
+                bloomPass.threshold = 0;
+                bloomPass.strength = 0;
+                bloomPass.radius = 0;
+
+                composer = new EffectComposer(renderer);
+                composer.addPass(renderScene);
+                composer.addPass(bloomPass);
+                
+                // Assign to renderer for auto-loop
+                r.composer = composer;
+
+                // Setup UI
+                r.setUI(UI_CONFIG);
+                r.onParamChange = (key, value) => {
+                    if (key === 'scale') { config.userScale = value; config.globalScale = value; }
+                    if (key === 'speed') config.speed = value;
+                    if (key === 'concurrency') config.concurrency = value;
+                    if (key === 'colorShift') config.colorShift = value;
+                    if (key === 'explosionHeight') config.explosionHeight = value;
+                };
+
+                // Custom Update Loop (Hook into r.customRender or onFrame?)
+                // UnifiedRenderer 'three' type uses default loop which calls composer.render().
+                // But we need to update fireworks state BEFORE render.
+                // We can use r.updateCallback.
+                
+                const bgOverlay = document.getElementById('bg-overlay');
+                
+                r.updateCallback = (time, delta) => {
+                     // Note: UnifiedRenderer passes time, delta from its own clock.
+                     // But we have our own logic using clock.getDelta() in original code.
+                     // Let's use the provided delta.
+                     
+                     // Speed control
+                     const scaledDelta = delta * config.speed;
+                     totalElapsedTime += scaledDelta;
+
+                     // Fade In
+                     let globalAlpha = 1.0;
+                     if (totalElapsedTime < 0.5) globalAlpha = totalElapsedTime / 0.5;
+                     globalTint.setScalar(globalAlpha);
+                     
+                     // BG Overlay
+                     let maxExplosionIntensity = 0.0;
+                     fireworks.forEach(f => {
+                         if (f.isActive && f.isExploded) {
+                             const explosionTime = totalElapsedTime - f.explosionStartTime;
+                             if (explosionTime < 1.0) {
+                                 const intensity = 1.0 - (explosionTime / 1.0);
+                                 if (intensity > maxExplosionIntensity) maxExplosionIntensity = intensity;
+                             }
+                         }
+                     });
+                     const targetOpacity = 0.0 + maxExplosionIntensity * 0.2;
+                     bgOverlay.style.opacity = targetOpacity;
+
+                     // Launch Logic
+                     if (totalElapsedTime >= nextLaunchTime) {
+                         const firework = fireworks.find(f => !f.isActive);
+                         if (firework) {
+                             let currentX;
+                             const minDistance = 8.0;
+                             let attempts = 0;
+                             do {
+                                 currentX = -24.0 + Math.random() * 48.0;
+                                 attempts++;
+                             } while (lastLaunchX !== null && Math.abs(currentX - lastLaunchX) < minDistance && attempts < 10);
+                             
+                             lastLaunchX = currentX;
+                             firework.reset(totalElapsedTime, 0, currentX);
+                             
+                             const minDelay = 1.0 / config.concurrency;
+                             const maxDelay = config.launchInterval / config.concurrency;
+                             nextLaunchTime = totalElapsedTime + minDelay + Math.random() * (maxDelay - minDelay);
+                         }
+                     }
+
+                     fireworks.forEach(f => {
+                         if (f.isActive) {
+                             f.update(totalElapsedTime);
+                             if (totalElapsedTime - f.startTime > config.launchInterval) {
+                                 f.isActive = false;
+                                 f.launchText.visible = false;
+                                 f.explosionGroup.visible = false;
+                             }
+                         }
+                     });
+                };
+            }
+        });
+    </script>
+</body>
+</html>

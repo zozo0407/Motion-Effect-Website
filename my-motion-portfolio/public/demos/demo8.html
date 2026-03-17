@@ -1,0 +1,352 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Demo 8 - Kinetic Particles</title>
+    <style>
+        body { margin: 0; overflow: hidden; background-color: #000; }
+        canvas { display: block; }
+    </style>
+    <script type="importmap">
+        {
+            "imports": {
+                "three": "https://unpkg.com/three@0.160.0/build/three.module.js",
+                "three/addons/": "https://unpkg.com/three@0.160.0/examples/jsm/"
+            }
+        }
+    </script>
+</head>
+<body>
+    <script type="module">
+        import * as THREE from 'three';
+        import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';
+        import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
+        import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
+
+        // --- Config ---
+        const CONFIG = {
+            particleCount: 20000, // Reduced for performance safety
+            particleSize: 2.0,
+            repulsionRadius: 50,
+            repulsionStrength: 2.0,
+            returnSpeed: 0.05,
+            imagePath: '../sample/sample1.jpg' // Default image
+        };
+
+        // --- Scene Setup ---
+        const scene = new THREE.Scene();
+        // scene.fog = new THREE.FogExp2(0x000000, 0.001);
+
+        const camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
+        camera.position.z = 100;
+
+        const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+        renderer.setSize(window.innerWidth, window.innerHeight);
+        renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+        document.body.appendChild(renderer.domElement);
+
+        // --- Post Processing ---
+        const composer = new EffectComposer(renderer);
+        const renderPass = new RenderPass(scene, camera);
+        composer.addPass(renderPass);
+        
+        const bloomPass = new UnrealBloomPass(new THREE.Vector2(window.innerWidth, window.innerHeight), 1.5, 0.4, 0.85);
+        bloomPass.threshold = 0.1;
+        bloomPass.strength = 0.8;
+        bloomPass.radius = 0.5;
+        composer.addPass(bloomPass);
+
+        // --- Particle System ---
+        let mesh;
+        let originalPositions; // Float32Array
+        let currentPositions; // Float32Array
+        let velocities; // Float32Array
+        let colors; // Float32Array
+        let targetColors; // Float32Array
+        
+        const dummy = new THREE.Object3D();
+        const raycaster = new THREE.Raycaster();
+        const mouse = new THREE.Vector2(-9999, -9999); // Off-screen default
+        const plane = new THREE.Plane(new THREE.Vector3(0, 0, 1), 0); // Z=0 Plane for raycasting
+
+        function initParticles(texture) {
+            if (mesh) {
+                scene.remove(mesh);
+                mesh.geometry.dispose();
+                mesh.material.dispose();
+            }
+
+            const width = texture.image.width;
+            const height = texture.image.height;
+            const aspect = width / height;
+            
+            // Grid Layout
+            // We want roughly CONFIG.particleCount particles
+            // rows * cols = count
+            // cols / rows = aspect
+            // cols = rows * aspect
+            // rows^2 * aspect = count
+            // rows = sqrt(count / aspect)
+            
+            const rows = Math.floor(Math.sqrt(CONFIG.particleCount / aspect));
+            const cols = Math.floor(rows * aspect);
+            const count = rows * cols;
+
+            // Canvas for color sampling
+            const canvas = document.createElement('canvas');
+            canvas.width = width;
+            canvas.height = height;
+            const ctx = canvas.getContext('2d');
+            ctx.drawImage(texture.image, 0, 0);
+            const imgData = ctx.getImageData(0, 0, width, height).data;
+
+            // Geometry (Instanced)
+            const geometry = new THREE.PlaneGeometry(1, 1);
+            const material = new THREE.MeshBasicMaterial({
+                color: 0xffffff,
+                transparent: true,
+                opacity: 0.9,
+                blending: THREE.AdditiveBlending
+            });
+
+            mesh = new THREE.InstancedMesh(geometry, material, count);
+            mesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
+            
+            // Storage
+            originalPositions = new Float32Array(count * 3);
+            currentPositions = new Float32Array(count * 3);
+            velocities = new Float32Array(count * 3);
+            colors = new Float32Array(count * 3);
+
+            // Scale to fit camera view roughly
+            const displayHeight = 100;
+            const displayWidth = displayHeight * aspect;
+            
+            const stepX = displayWidth / cols;
+            const stepY = displayHeight / rows;
+
+            for (let i = 0; i < count; i++) {
+                const col = i % cols;
+                const row = Math.floor(i / cols);
+
+                const x = (col - cols / 2) * stepX;
+                const y = (rows / 2 - row) * stepY; // Flip Y
+                const z = 0;
+
+                originalPositions[i*3] = x;
+                originalPositions[i*3+1] = y;
+                originalPositions[i*3+2] = z;
+
+                currentPositions[i*3] = x;
+                currentPositions[i*3+1] = y;
+                currentPositions[i*3+2] = z;
+
+                dummy.position.set(x, y, z);
+                dummy.scale.set(stepX * 0.8, stepY * 0.8, 1); // Slight gap
+                dummy.updateMatrix();
+                mesh.setMatrixAt(i, dummy.matrix);
+
+                // Color Sampling
+                // Map grid (col, row) to image (imgX, imgY)
+                const imgX = Math.floor((col / cols) * width);
+                const imgY = Math.floor((row / rows) * height);
+                const idx = (imgY * width + imgX) * 4;
+                
+                const r = imgData[idx] / 255;
+                const g = imgData[idx+1] / 255;
+                const b = imgData[idx+2] / 255;
+                
+                mesh.setColorAt(i, new THREE.Color(r, g, b));
+            }
+            
+            mesh.instanceColor.needsUpdate = true; // IMPORTANT
+            scene.add(mesh);
+        }
+
+        // --- Image Loading ---
+        const loader = new THREE.TextureLoader();
+        loader.load(CONFIG.imagePath, (tex) => {
+            initParticles(tex);
+        });
+
+        // --- Interaction ---
+        window.addEventListener('mousemove', (e) => {
+            mouse.x = (e.clientX / window.innerWidth) * 2 - 1;
+            mouse.y = -(e.clientY / window.innerHeight) * 2 + 1;
+        });
+
+        window.addEventListener('resize', () => {
+            camera.aspect = window.innerWidth / window.innerHeight;
+            camera.updateProjectionMatrix();
+            renderer.setSize(window.innerWidth, window.innerHeight);
+            composer.setSize(window.innerWidth, window.innerHeight);
+        });
+
+        // --- Animation Loop ---
+        const clock = new THREE.Clock();
+        const mousePos3D = new THREE.Vector3();
+
+        function animate() {
+            requestAnimationFrame(animate);
+
+            if (!mesh) return;
+
+            // Get Mouse 3D Position
+            raycaster.setFromCamera(mouse, camera);
+            raycaster.ray.intersectPlane(plane, mousePos3D);
+
+            const count = mesh.count;
+            let needsUpdate = false;
+
+            for (let i = 0; i < count; i++) {
+                const ix = i * 3;
+                const iy = i * 3 + 1;
+                const iz = i * 3 + 2;
+
+                let px = currentPositions[ix];
+                let py = currentPositions[iy];
+                let pz = currentPositions[iz];
+
+                let vx = velocities[ix];
+                let vy = velocities[iy];
+                let vz = velocities[iz];
+
+                const ox = originalPositions[ix];
+                const oy = originalPositions[iy];
+                const oz = originalPositions[iz];
+
+                // 1. Repulsion from Mouse
+                const dx = px - mousePos3D.x;
+                const dy = py - mousePos3D.y;
+                const dz = pz - mousePos3D.z; // Usually 0 but particles might move in Z
+                
+                const distSq = dx*dx + dy*dy; // + dz*dz; // Ignore Z distance for cylindrical repulsion or sphere? Let's do 2.5D repulsion
+                
+                if (distSq < CONFIG.repulsionRadius * CONFIG.repulsionRadius) {
+                    const dist = Math.sqrt(distSq);
+                    const force = (1.0 - dist / CONFIG.repulsionRadius) * CONFIG.repulsionStrength;
+                    
+                    // Add random noise for "Sand" feel
+                    const angle = Math.atan2(dy, dx);
+                    vx += Math.cos(angle) * force + (Math.random()-0.5)*0.1;
+                    vy += Math.sin(angle) * force + (Math.random()-0.5)*0.1;
+                    vz += (Math.random()-0.5) * force; // Pop out in Z
+                }
+
+                // 2. Return to Origin (Spring)
+                const rx = ox - px;
+                const ry = oy - py;
+                const rz = oz - pz;
+                
+                vx += rx * CONFIG.returnSpeed;
+                vy += ry * CONFIG.returnSpeed;
+                vz += rz * CONFIG.returnSpeed;
+
+                // 3. Friction
+                vx *= 0.90;
+                vy *= 0.90;
+                vz *= 0.90;
+
+                // Update
+                px += vx;
+                py += vy;
+                pz += vz;
+
+                currentPositions[ix] = px;
+                currentPositions[iy] = py;
+                currentPositions[iz] = pz;
+                
+                velocities[ix] = vx;
+                velocities[iy] = vy;
+                velocities[iz] = vz;
+
+                // Check if moving significantly to update matrix
+                // (Optimization: Always update for smoothness in this demo)
+                dummy.position.set(px, py, pz);
+                
+                // Rotate based on velocity for kinetic feel
+                dummy.rotation.z = vx * 0.1;
+                dummy.rotation.x = vy * 0.1;
+                
+                // Scale change on Z (pop effect)
+                const scale = 1.0 + Math.abs(vz) * 0.5;
+                // Get original step sizes (approx)
+                // We don't have them per particle easily, but we set them uniformly. 
+                // Let's assume standard scale factor 1.0 relative to initialization.
+                // Re-calculating scale is expensive? No, we used dummy.scale.set before.
+                // We need to preserve the aspect ratio scale.
+                // Let's just scale relative to 1.0? 
+                // Actually, the dummy scale is reset every loop if we use set().
+                // We need to know the initial scale.
+                // Hack: Just use a fixed scale based on config for now, or read from matrix?
+                // Reading is slow. Let's just use 1.0 and rely on initialization?
+                // No, init set specific scales.
+                // We'll skip scaling animation for now to save complexity, or re-calculate.
+                
+                dummy.updateMatrix();
+                mesh.setMatrixAt(i, dummy.matrix);
+            }
+
+            mesh.instanceMatrix.needsUpdate = true;
+            composer.render();
+        }
+        animate();
+
+        // --- UI Communication ---
+        const UI_CONFIG = [
+            { name: '斥力半径', value: 50, min: 10, max: 100, bind: 'radius' },
+            { name: '斥力强度', value: 2.0, min: 0.1, max: 10.0, bind: 'strength' },
+            { name: '复原速度', value: 0.05, min: 0.01, max: 0.2, bind: 'return' }
+        ];
+
+        const SOURCE_OPTIONS = [
+            { name: '示例图片 1', value: 'default', type: 'image', path: '../sample/sample1.jpg' },
+            { name: '示例图片 2', value: 's2', type: 'image', path: '../sample/Sample2.jpg' }
+        ];
+
+        function sendConfig() {
+            if (window.parent) {
+                window.parent.postMessage({
+                    type: 'UI_CONFIG',
+                    config: UI_CONFIG,
+                    sources: SOURCE_OPTIONS
+                }, '*');
+            }
+        }
+
+        window.addEventListener('message', (event) => {
+            const data = event.data;
+            if (!data) return;
+
+            if (data.type === 'HANDSHAKE') sendConfig();
+
+            if (data.type === 'UPDATE_PARAM') {
+                if (data.key === 'radius') CONFIG.repulsionRadius = data.value;
+                if (data.key === 'strength') CONFIG.repulsionStrength = data.value;
+                if (data.key === 'return') CONFIG.returnSpeed = data.value;
+            }
+
+            if (data.type === 'LOAD_SOURCE') {
+                const src = data.source;
+                if (src.type === 'image') {
+                    loader.load(src.path, (tex) => {
+                        initParticles(tex);
+                    });
+                }
+            }
+            
+            if (data.type === 'SAVE_IMAGE') {
+                 renderer.render(scene, camera);
+                 const link = document.createElement('a');
+                 link.download = 'kinetic-particles.png';
+                 link.href = renderer.domElement.toDataURL('image/png');
+                 link.click();
+            }
+        });
+
+        sendConfig();
+
+    </script>
+</body>
+</html>

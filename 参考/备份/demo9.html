@@ -1,0 +1,851 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Demo 9 - AI Depth Parallax</title>
+    <style>
+        body { margin: 0; overflow: hidden; background-color: #000; }
+        #canvas-container { position: absolute; top: 0; left: 0; width: 100%; height: 100%; z-index: 1; }
+        #overlay-container { position: absolute; top: 0; left: 0; width: 100%; height: 100%; pointer-events: none; z-index: 2; }
+        
+        .loading-overlay {
+            position: absolute; top: 0; left: 0; width: 100%; height: 100%;
+            background: rgba(0,0,0,0.8);
+            display: flex; flex-direction: column;
+            justify-content: center; align-items: center;
+            color: white; font-family: monospace; z-index: 10;
+            transition: opacity 0.5s;
+        }
+        .loading-text { font-size: 16px; margin-bottom: 10px; color: #00ff88; }
+        .loading-bar { width: 200px; height: 4px; background: #333; border-radius: 2px; overflow: hidden; }
+        .loading-progress { width: 0%; height: 100%; background: #00ff88; transition: width 0.2s; }
+    </style>
+    
+    <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@latest/dist/tf.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@tensorflow-models/coco-ssd"></script>
+
+    <!-- Three.js -->
+    <script type="importmap">
+        {
+            "imports": {
+                "three": "https://unpkg.com/three@0.160.0/build/three.module.js",
+                "three/addons/": "https://unpkg.com/three@0.160.0/examples/jsm/",
+                "@xenova/transformers": "https://cdn.jsdelivr.net/npm/@xenova/transformers@2.17.2/dist/transformers.min.js"
+            }
+        }
+    </script>
+</head>
+<body>
+    <div id="canvas-container"></div>
+    <canvas id="overlay-container"></canvas>
+    
+    <div id="loading" class="loading-overlay">
+        <div class="loading-text" id="status-text">INITIALIZING AI ENGINE...</div>
+        <div class="loading-bar"><div class="loading-progress" id="progress-bar"></div></div>
+        <div style="margin-top:10px; font-size: 10px; color: #666;">Downloading Depth Anything Model (~30MB)...</div>
+    </div>
+
+    <script type="module">
+        import * as THREE from 'three';
+        import { pipeline, env } from '@xenova/transformers';
+
+        // --- Config ---
+        // Disable local model check since we are in browser
+        env.allowLocalModels = false;
+        env.useBrowserCache = true;
+
+        const CONFIG = {
+            intensity: 0.15, // Reduced default intensity
+            focus: 0.5,      // Depth level that stays stationary
+            zoom: 1.1,       // Slight zoom to cover edges
+            showTracking: true, // Tracking HUD
+            trackingStyle: 'Tech' // Default Style
+        };
+
+        // --- Overlay Setup ---
+        const overlayCanvas = document.getElementById('overlay-container');
+        const ctx = overlayCanvas.getContext('2d');
+        let detectedFeatures = []; // {x, y, depth, label}
+        let depthDataRaw = null; // Float32Array or similar
+        let depthWidth = 1;
+        let depthHeight = 1;
+
+        // Resize Overlay
+        function resizeOverlay() {
+            overlayCanvas.width = window.innerWidth;
+            overlayCanvas.height = window.innerHeight;
+        }
+        window.addEventListener('resize', resizeOverlay);
+        resizeOverlay();
+        const container = document.getElementById('canvas-container');
+        const scene = new THREE.Scene();
+        const camera = new THREE.OrthographicCamera(-1, 1, 1, -1, 0, 1); // Fullscreen Quad
+        
+        const renderer = new THREE.WebGLRenderer({ antialias: true });
+        renderer.setSize(window.innerWidth, window.innerHeight);
+        container.appendChild(renderer.domElement);
+
+        // --- Shader Material ---
+        // We use a displacement logic:
+        // Pixel P at (u,v) moves to P' based on its Depth D.
+        // P' = P + MouseOffset * (D - Focus)
+        // But in Fragment Shader we are rendering pixel P', so we need to inverse map?
+        // Simple Parallax: To render UV, we look at where this pixel *came from*.
+        // uv_sample = uv - MouseOffset * (Depth(uv) - Focus)
+        // This is an approximation (relief mapping) but works for small displacements.
+        
+        const fragmentShader = `
+            uniform sampler2D uTexture;
+            uniform sampler2D uDepthMap;
+            uniform vec2 uMouse;
+            uniform float uIntensity;
+            uniform float uFocus;
+            uniform float uZoom;
+            uniform vec2 uResolution;
+            uniform vec2 uImgResolution;
+
+            varying vec2 vUv;
+
+            // Bicubic Sampling for Smoother Textures
+            vec4 texture2DBicubic(sampler2D sampler, vec2 texCoords, vec2 texSize) {
+                vec2 invTexSize = 1.0 / texSize;
+                texCoords = texCoords * texSize - 0.5;
+
+                vec2 fxy = fract(texCoords);
+                texCoords -= fxy;
+
+                vec4 xcubic = vec4(
+                    1.0 - 2.0 * fxy.x + fxy.x * fxy.x,
+                    1.0 + 2.0 * fxy.x - 2.0 * fxy.x * fxy.x,
+                    1.0 - fxy.x * fxy.x,
+                    fxy.x * fxy.x
+                );
+                vec4 ycubic = vec4(
+                    1.0 - 2.0 * fxy.y + fxy.y * fxy.y,
+                    1.0 + 2.0 * fxy.y - 2.0 * fxy.y * fxy.y,
+                    1.0 - fxy.y * fxy.y,
+                    fxy.y * fxy.y
+                );
+
+                vec4 c = texCoords.xxyy + vec2(-0.5, +1.5).xyxy;
+                vec4 s = vec4(xcubic.xz + xcubic.yw, ycubic.xz + ycubic.yw);
+                vec4 offset = c + vec4(xcubic.yw, ycubic.yw) / s;
+
+                vec4 sample0 = texture2D(sampler, offset.xz * invTexSize);
+                vec4 sample1 = texture2D(sampler, offset.yz * invTexSize);
+                vec4 sample2 = texture2D(sampler, offset.xw * invTexSize);
+                vec4 sample3 = texture2D(sampler, offset.yw * invTexSize);
+
+                float sx = s.x / (s.x + s.y);
+                float sy = s.z / (s.z + s.w);
+
+                return mix(
+                    mix(sample3, sample2, sx),
+                    mix(sample1, sample0, sx),
+                    sy
+                );
+            }
+
+            void main() {
+                // Aspect Ratio Correction (Contain Mode)
+                float screenAspect = uResolution.x / uResolution.y;
+                float imgAspect = (uImgResolution.y > 0.0) ? (uImgResolution.x / uImgResolution.y) : 1.0;
+                
+                vec2 scale = vec2(1.0);
+                if (screenAspect > imgAspect) {
+                    scale.x = imgAspect / screenAspect;
+                } else {
+                    scale.y = screenAspect / imgAspect;
+                }
+                
+                vec2 uv = (vUv - 0.5) / scale + 0.5;
+                
+                // Black Bars Check (Pre-distortion)
+                if (uv.x < 0.0 || uv.x > 1.0 || uv.y < 0.0 || uv.y > 1.0) {
+                   gl_FragColor = vec4(0.0, 0.0, 0.0, 1.0);
+                   return;
+                }
+
+                // Zoom
+                vec2 center = vec2(0.5);
+                uv = (uv - center) / uZoom + center;
+
+                // --- Parallax Occlusion Mapping (Steep Parallax + Interpolation) ---
+                
+                // 1. Setup Ray
+                // Ray passes through (uv, uFocus) in UV-Height space.
+                // Direction depends on uMouse.
+                // If Mouse Right (+), View from Right. Ray tilts Right (Positive) to match JS logic and correct Parallax.
+                vec2 parallaxDir = uMouse * uIntensity; 
+                
+                // We march Height from 1.0 (Near) to 0.0 (Far).
+                const float numSteps = 40.0;
+                float stepSize = 1.0 / numSteps;
+                
+                // Starting Point (Height = 1.0)
+                float currentLayerHeight = 1.0;
+                // UV at Height=1.0:
+                // R(h) = uv + (h - uFocus) * P
+                vec2 currentUV = uv + (1.0 - uFocus) * parallaxDir;
+                
+                // Delta UV per step (Height decreases by stepSize)
+                // dUV = stepSize * parallaxDir
+                vec2 dUV = stepSize * parallaxDir;
+
+                // 2. Steep Parallax Loop
+                float currentDepthMapValue = texture2D(uDepthMap, currentUV).r;
+                
+                // Variables for Interpolation
+                float prevLayerHeight = 1.0;
+                vec2 prevUV = currentUV;
+                float prevDepthMapValue = currentDepthMapValue;
+
+                // Iterate
+                for(int i = 0; i < 40; i++) {
+                    // Check intersection: Is Ray Height <= Surface Height?
+                    if (currentLayerHeight <= currentDepthMapValue) {
+                        break; // Hit!
+                    }
+                    
+                    // Advance
+                    prevLayerHeight = currentLayerHeight;
+                    prevUV = currentUV;
+                    prevDepthMapValue = currentDepthMapValue;
+                    
+                    currentLayerHeight -= stepSize;
+                    currentUV -= dUV;
+                    currentDepthMapValue = texture2D(uDepthMap, currentUV).r;
+                }
+                
+                // 3. Occlusion Interpolation (Linear)
+                // We are between 'prev' (above) and 'current' (below).
+                // Find weight w where RayHeight(w) == SurfaceHeight(w).
+                
+                // Distances to surface
+                float distPrev = prevLayerHeight - prevDepthMapValue; // Positive
+                float distCurr = currentLayerHeight - currentDepthMapValue; // Negative
+                
+                // Weight (0 = prev, 1 = current)
+                float weight = distPrev / (distPrev - distCurr);
+                
+                // Interpolate UV
+                vec2 finalUV = mix(prevUV, currentUV, weight);
+                
+                // 4. Sample Color
+                // Bounds check for distorted UV
+                if (finalUV.x < 0.0 || finalUV.x > 1.0 || finalUV.y < 0.0 || finalUV.y > 1.0) {
+                    // Soft fade at edges? Or just clamp/black?
+                    // Let's use a soft vignette to hide the tearing at edges
+                    // gl_FragColor = vec4(0.0); 
+                    // return;
+                }
+                
+                vec4 color = texture2DBicubic(uTexture, finalUV, uImgResolution);
+                
+                // 5. Lighting / Shadowing (Optional)
+                // We can compute soft shadows or ambient occlusion based on step count?
+                // Or just keep it clean.
+                
+                gl_FragColor = color;
+            }
+        `;
+
+        const vertexShader = `
+            varying vec2 vUv;
+            void main() {
+                vUv = uv;
+                gl_Position = vec4(position, 1.0);
+            }
+        `;
+
+        const uniforms = {
+            uTexture: { value: null },
+            uDepthMap: { value: null }, // Placeholder
+            uMouse: { value: new THREE.Vector2(0, 0) },
+            uIntensity: { value: CONFIG.intensity },
+            uFocus: { value: CONFIG.focus },
+            uZoom: { value: CONFIG.zoom },
+            uResolution: { value: new THREE.Vector2(window.innerWidth, window.innerHeight) },
+            uImgResolution: { value: new THREE.Vector2(1, 1) }
+        };
+
+        const material = new THREE.ShaderMaterial({
+            vertexShader,
+            fragmentShader,
+            uniforms
+        });
+
+        const geometry = new THREE.PlaneGeometry(2, 2);
+        const plane = new THREE.Mesh(geometry, material);
+        scene.add(plane);
+
+        // --- AI & Logic ---
+        const statusText = document.getElementById('status-text');
+        const progressBar = document.getElementById('progress-bar');
+        const loadingOverlay = document.getElementById('loading');
+
+        let depthEstimator = null;
+        let objectDetector = null; // COCO-SSD
+        let currentImageURL = '../sample/Sample2.jpg'; // Default starting image
+
+        // Initialize Pipeline
+        async function initAI() {
+            try {
+                // 1. Load Object Detection Model (TF.js)
+                statusText.innerText = "LOADING OBJECT DETECTOR (COCO-SSD)...";
+                if (window.cocoSsd) {
+                    objectDetector = await window.cocoSsd.load();
+                }
+
+                // 2. Load Depth Model (Transformers.js)
+                statusText.innerText = "LOADING DEPTH MODEL (Depth Anything)...";
+                // Now using Transformers.js v2.17.2 which supports 'depth-anything'
+                // This model is much smaller (~30MB) and faster/better than MiDaS
+                depthEstimator = await pipeline('depth-estimation', 'Xenova/depth-anything-small-hf', {
+                    quantized: true, // Force quantized model (smaller download)
+                    progress_callback: (data) => {
+                        if (data.status === 'progress') {
+                            const percent = Math.round(data.progress || 0);
+                            progressBar.style.width = percent + '%';
+                        }
+                    }
+                });
+                
+                statusText.innerText = "MODEL READY. PROCESSING IMAGE...";
+                await processImage(currentImageURL);
+                
+            } catch (e) {
+                console.error(e);
+                statusText.innerText = "ERROR LOADING AI: " + e.message;
+                statusText.style.color = "#ff4444";
+            }
+        }
+
+        async function processImage(url) {
+            loadingOverlay.style.opacity = '1';
+            loadingOverlay.style.pointerEvents = 'auto';
+            statusText.innerText = "COMPUTING DEPTH MAP...";
+            
+            // 1. Load Image Texture
+            const texLoader = new THREE.TextureLoader();
+            texLoader.load(url, async (texture) => {
+                texture.minFilter = THREE.LinearFilter;
+                texture.magFilter = THREE.LinearFilter;
+                texture.wrapS = THREE.MirroredRepeatWrapping;
+                texture.wrapT = THREE.MirroredRepeatWrapping;
+                uniforms.uTexture.value = texture;
+                
+                // 2. Run AI Inference
+                // Transformers.js takes image URL or Element
+                const output = await depthEstimator(url);
+                // Output is { depth: Tensor, predicted_depth: Tensor }
+                // Or simply an object with `depth` property being a raw image/tensor?
+                // The 'depth-estimation' pipeline returns { depth: RawImage, predicted_depth: Tensor }
+                
+                // We need to convert output.depth (RawImage) to a Texture
+                // RawImage has .toCanvas()
+                
+                const depthCanvas = output.depth.toCanvas();
+                
+                const depthTexture = new THREE.CanvasTexture(depthCanvas);
+                depthTexture.minFilter = THREE.LinearFilter;
+                depthTexture.magFilter = THREE.LinearFilter;
+                depthTexture.wrapS = THREE.MirroredRepeatWrapping;
+                depthTexture.wrapT = THREE.MirroredRepeatWrapping;
+                
+                uniforms.uDepthMap.value = depthTexture;
+                uniforms.uImgResolution.value.set(texture.image.width, texture.image.height);
+                
+                // Store Depth Data for HUD
+                // output.depth is a RawImage { data, width, height, channels }
+                // We need to access the raw pixel data. 
+                // Transformers.js RawImage data is typically a typed array.
+                depthDataRaw = output.depth.data;
+                depthWidth = output.depth.width;
+                depthHeight = output.depth.height;
+                
+                // 3. Run Object Detection (COCO-SSD)
+                await detectObjects(texture.image);
+                
+                // Done
+                loadingOverlay.style.opacity = '0';
+                loadingOverlay.style.pointerEvents = 'none';
+            });
+        }
+
+        // --- Feature Detection (COCO-SSD + Depth Sampling) ---
+        async function detectObjects(image) {
+            detectedFeatures = [];
+            
+            // 1. Run COCO-SSD (Semantic Objects)
+            if (objectDetector) {
+                try {
+                    const predictions = await objectDetector.detect(image);
+                    const w = image.width;
+                    const h = image.height;
+
+                    predictions.forEach((pred) => {
+                        if (pred.score < 0.4) return; // Slightly lower threshold
+
+                        const bbox = pred.bbox; 
+                        const nx = (bbox[0] + bbox[2]/2) / w; 
+                        const ny = (bbox[1] + bbox[3]/2) / h; 
+                        const nw = bbox[2] / w;
+                        const nh = bbox[3] / h;
+                        
+                        let depthVal = 0.5;
+                        if (depthDataRaw) {
+                            const dx = Math.floor(nx * depthWidth);
+                            const dy = Math.floor(ny * depthHeight);
+                            const di = (dy * depthWidth + dx);
+                            if (depthDataRaw[di] !== undefined) {
+                                depthVal = depthDataRaw[di];
+                                if (depthVal > 1.0) depthVal /= 255.0;
+                            }
+                        }
+
+                        detectedFeatures.push({
+                            x: nx,
+                            y: ny,
+                            depth: depthVal,
+                            label: pred.class.toUpperCase() + ` ${(pred.score*100).toFixed(0)}%`,
+                            w: nw,
+                            h: nh
+                        });
+                    });
+                } catch (err) {
+                    console.error("Detection Error:", err);
+                }
+            } else {
+                console.warn("Object Detector not loaded, skipping semantic detection.");
+            }
+
+            // 2. ALWAYS Run Manual Feature Detection (High Contrast Points)
+            // This ensures we always have "tech" boxes even if COCO-SSD finds nothing or only 1 person.
+            detectFeaturesManual(image);
+        }
+
+        // --- Fallback/Augmentation: Simple High Contrast Detection ---
+        function detectFeaturesManual(image) {
+             // Draw image to temp canvas to read pixels
+             const cvs = document.createElement('canvas');
+             cvs.width = 512; // Downscale for speed
+             cvs.height = 512 * (image.height / image.width);
+             const c = cvs.getContext('2d');
+             c.drawImage(image, 0, 0, cvs.width, cvs.height);
+             const imgData = c.getImageData(0, 0, cvs.width, cvs.height);
+             const data = imgData.data;
+             const w = cvs.width;
+             const h = cvs.height;
+
+             // Note: We do NOT clear detectedFeatures here, we append to it.
+             
+             // Grid Search for brightest/highest contrast points
+             const gridSize = 48; // Smaller grid = more points (was 64)
+             let objectCount = 0;
+
+             for(let y = 0; y < h; y += gridSize) {
+                 for(let x = 0; x < w; x += gridSize) {
+                     // Find max contrast in this cell
+                     let maxVal = 0;
+                     let maxX = 0;
+                     let maxY = 0;
+
+                     for(let gy = 0; gy < gridSize; gy+=4) {
+                         for(let gx = 0; gx < gridSize; gx+=4) {
+                             const px = x + gx;
+                             const py = y + gy;
+                             if(px >= w || py >= h) continue;
+                             
+                             const i = (py * w + px) * 4;
+                             // Luminance
+                             const lum = (data[i] * 0.299 + data[i+1] * 0.587 + data[i+2] * 0.114);
+                             
+                             if (lum > maxVal) {
+                                 maxVal = lum;
+                                 maxX = px;
+                                 maxY = py;
+                             }
+                         }
+                     }
+
+                     // Lower threshold and increase probability
+                     if (maxVal > 80 && Math.random() > 0.2) { 
+                         objectCount++;
+                         const nx = maxX / w;
+                         const ny = maxY / h;
+                         
+                         // Check if this point is too close to an existing COCO-SSD box?
+                         // Optional: filtering to avoid overlap. 
+                         // For now, let's keep it chaotic/techy.
+
+                         let depthVal = 0.5;
+                         if (depthDataRaw) {
+                             const dx = Math.floor(nx * depthWidth);
+                             const dy = Math.floor(ny * depthHeight);
+                             const di = (dy * depthWidth + dx);
+                             if (depthDataRaw[di] !== undefined) {
+                                 depthVal = depthDataRaw[di];
+                                 if (depthVal > 1.0) depthVal /= 255.0;
+                             }
+                         }
+
+                         detectedFeatures.push({
+                             x: nx,
+                             y: ny,
+                             depth: depthVal,
+                             label: `SCAN ${objectCount.toString().padStart(2, '0')}`,
+                             w: 0.03 + Math.random() * 0.04, // Smaller boxes for features
+                             h: 0.03 + Math.random() * 0.04
+                         });
+                     }
+                 }
+             }
+        }
+
+        // --- HUD Rendering ---
+        function renderHUD() {
+            ctx.clearRect(0, 0, overlayCanvas.width, overlayCanvas.height);
+            if (!CONFIG.showTracking) return;
+
+            const width = overlayCanvas.width;
+            const height = overlayCanvas.height;
+            
+            // Re-calculate Contain Scale to match Shader Logic
+            // We need the HUD to line up EXACTLY with the image
+            const imgRes = uniforms.uImgResolution.value;
+            const screenAspect = width / height;
+            const imgAspect = (imgRes.y > 0) ? (imgRes.x / imgRes.y) : 1.0;
+            
+            let scaleX = 1.0, scaleY = 1.0;
+            if (screenAspect > imgAspect) {
+                // Screen wider: Fit Height. Image width < Screen width.
+                // Shader: scale.x = imgAspect / screenAspect
+                // This means the UV space (0..1) covers a smaller portion of screen X?
+                // No, UV 0..1 covers the Image.
+                // Screen X goes from 0..width.
+                // Image display width = height * imgAspect.
+                // Offset X = (width - dispWidth) / 2.
+                
+                const dispH = height;
+                const dispW = height * imgAspect;
+                const offX = (width - dispW) / 2;
+                const offY = 0;
+                
+                drawFeatures(dispW, dispH, offX, offY);
+            } else {
+                // Screen taller: Fit Width.
+                const dispW = width;
+                const dispH = width / imgAspect;
+                const offX = 0;
+                const offY = (height - dispH) / 2;
+                
+                drawFeatures(dispW, dispH, offX, offY);
+            }
+        }
+
+        function drawFeatures(dispW, dispH, offX, offY) {
+            const style = CONFIG.trackingStyle;
+            
+            // Common Styles
+            ctx.lineWidth = 1;
+            ctx.font = '10px monospace';
+
+            if (style === 'Tech') {
+                ctx.strokeStyle = 'rgba(255, 255, 255, 0.8)';
+                ctx.fillStyle = 'rgba(255, 255, 255, 0.8)';
+            } else if (style === 'Minimal') {
+                ctx.strokeStyle = 'rgba(255, 255, 255, 0.4)';
+                ctx.fillStyle = 'rgba(255, 255, 255, 0.0)'; // No text
+            } else if (style === 'Crosshair') {
+                ctx.strokeStyle = '#00CAE0'; // Cyan
+                ctx.fillStyle = '#00CAE0';
+            }
+
+            // Draw Lines between points (Constellation) - Only for Tech
+            if (style === 'Tech') {
+                ctx.beginPath();
+                detectedFeatures.forEach((f, i) => {
+                    if (i < detectedFeatures.length - 1) {
+                        const next = detectedFeatures[i+1];
+                        const p1 = getParallaxPos(f, dispW, dispH, offX, offY);
+                        const p2 = getParallaxPos(next, dispW, dispH, offX, offY);
+                        
+                        const dist = Math.hypot(p1.x - p2.x, p1.y - p2.y);
+                        if (dist < 200) {
+                            ctx.moveTo(p1.x, p1.y);
+                            ctx.quadraticCurveTo(p1.x, p2.y, p2.x, p2.y);
+                        }
+                    }
+                });
+                ctx.stroke();
+            }
+
+            // Draw Features
+            detectedFeatures.forEach(f => {
+                const pos = getParallaxPos(f, dispW, dispH, offX, offY);
+                const boxW = f.w * dispW;
+                const boxH = f.h * dispH;
+
+                if (style === 'Tech') {
+                    // Box
+                    ctx.strokeRect(pos.x - boxW/2, pos.y - boxH/2, boxW, boxH);
+                    // Label
+                    ctx.fillText(f.label, pos.x - boxW/2, pos.y - boxH/2 - 5);
+                    // Center Dot
+                    ctx.fillRect(pos.x - 1, pos.y - 1, 2, 2);
+                } 
+                else if (style === 'Minimal') {
+                    // Just corners
+                    const s = 10; // Corner size
+                    const x = pos.x - boxW/2;
+                    const y = pos.y - boxH/2;
+                    const w = boxW;
+                    const h = boxH;
+                    
+                    ctx.beginPath();
+                    // Top Left
+                    ctx.moveTo(x, y + s); ctx.lineTo(x, y); ctx.lineTo(x + s, y);
+                    // Top Right
+                    ctx.moveTo(x + w - s, y); ctx.lineTo(x + w, y); ctx.lineTo(x + w, y + s);
+                    // Bottom Left
+                    ctx.moveTo(x, y + h - s); ctx.lineTo(x, y + h); ctx.lineTo(x + s, y + h);
+                    // Bottom Right
+                    ctx.moveTo(x + w - s, y + h); ctx.lineTo(x + w, y + h); ctx.lineTo(x + w, y + h - s);
+                    ctx.stroke();
+                }
+                else if (style === 'Crosshair') {
+                    // Crosshair (+)
+                    const s = 10;
+                    ctx.beginPath();
+                    ctx.moveTo(pos.x - s, pos.y); ctx.lineTo(pos.x + s, pos.y);
+                    ctx.moveTo(pos.x, pos.y - s); ctx.lineTo(pos.x, pos.y + s);
+                    ctx.stroke();
+                    
+                    // Circle
+                    ctx.beginPath();
+                    ctx.arc(pos.x, pos.y, 5, 0, Math.PI * 2);
+                    ctx.stroke();
+                }
+            });
+        }
+
+        function getParallaxPos(feature, dispW, dispH, offX, offY) {
+            // Original Screen Pos (Center relative)
+            // UV (0..1) -> Screen
+            // feature.x is 0..1 in Image Space
+            
+            // 1. Apply Zoom (Inverse of Shader?)
+            // Shader: uv = (uv - 0.5) / zoom + 0.5
+            // So if we want the point on screen corresponding to image UV:
+            // The image is zoomed IN. So the point moves OUT.
+            // ScreenUV = (ImageUV - 0.5) * zoom + 0.5
+            
+            let u = (feature.x - 0.5) * CONFIG.zoom + 0.5;
+            let v = (1.0 - feature.y - 0.5) * CONFIG.zoom + 0.5; // Flip Y for Canvas?
+            // Wait, feature.y is 0 (top) to 1 (bottom) in standard image.
+            // Canvas Y is 0 (top).
+            // Shader V is 0 (bottom) usually? 
+            // Three.js Texture: (0,0) is Bottom-Left. 
+            // Canvas Image Data: (0,0) is Top-Left.
+            // So feature.y 0 is Top.
+            // In Shader vUv 0 is Bottom? Usually.
+            // Let's assume feature.y needs 1.0 - y to match shader V?
+            // Let's stick to Top-Left logic for Canvas.
+            
+            // 2. Apply Parallax Offset
+            // Shader: finalUv = uv + offset
+            // We want to find Screen Pos that maps to this Image UV.
+            // This is reverse mapping.
+            // Simple approach: Apply the SAME offset to the screen point?
+            // Shader: Pixel at Screen UV samples Texture at (ScreenUV + Offset).
+            // So Texture Pixel at T is seen at Screen S where S + Offset = T.
+            // S = T - Offset.
+            // Offset depends on depth.
+            // Offset = (depth - focus) * intensity * mouse.
+            // So S = T - (depth - focus) * intensity * mouse.
+            
+            const mouseX = uniforms.uMouse.value.x; // -1..1
+            const mouseY = uniforms.uMouse.value.y; // -1..1 (Inverted in shader?)
+            // Shader uMouse is directly from event listener logic.
+            
+            // In Shader: vec2 parallaxOffset = (depth - uFocus) * uIntensity * uMouse;
+            // Note: Depth map is sampled at 'uv' (the screen coord). 
+            // But here we know the depth of the OBJECT (feature.depth).
+            // So we use object depth.
+            
+            const offX_val = (feature.depth - CONFIG.focus) * CONFIG.intensity * mouseX;
+            const offY_val = (feature.depth - CONFIG.focus) * CONFIG.intensity * mouseY;
+            
+            // Apply Shift (Inverse of shader read)
+            // If shader reads from Right, pixel appears moved to Left.
+            // If offset is (+), it reads Right. Image shifts Left.
+            // So ScreenPos = Original - Offset.
+            
+            u -= offX_val;
+            // v is Y. In Canvas Y is Down.
+            // MouseY in shader: Up is (+)? 
+            // Let's check mouse listener: y = -(clientY...) -> Up is +1.
+            // Canvas Y is Down.
+            // If MouseY is +1 (Up), offset Y is (+).
+            // Shader reads (+Y) -> Up. Image shifts Down.
+            // Canvas Y should increase.
+            // So v += offY_val?
+            // Let's try (-) first to match X logic, assuming consistent space.
+            // Actually, X is Right(+). MouseX Right(+). Offset(+). Read Right. Shift Left.
+            // Canvas X should decrease. u -= offX is correct.
+            // Y is Up(+). MouseY Up(+). Offset(+). Read Up. Shift Down.
+            // Canvas Y (Down+) should Increase.
+            // So v += offY_val? Or is my Mouse Y logic inverted?
+            // Mouse Y: -(e.clientY...) -> Up is +1.
+            // Let's trial and error the Y sign or keep same.
+            
+            // Flip feature.y to match Shader V for calculation?
+            // No, let's work in 0..1 Screen Space (Top-Left 0,0).
+            
+            // Y Correction:
+            // Mouse Y is + (Up). 
+            // If I move mouse Up, MouseY > 0.
+            // Depth > Focus (Close). Offset > 0.
+            // Shader reads Up. Image moves Down.
+            // HUD Box should move Down.
+            // Canvas Y should Increase.
+            // So v += offY_val? (Since offY is +).
+            // Wait, MouseY is +1. offY is +. 
+            // If I do v -= offY, v decreases (Moves Up).
+            // So it must be v += offY_val?
+            // Let's try subtraction first (consistent with X) and flip if needed.
+            // Actually, since Mouse Y is inverted in listener (-1 to 1), but Canvas Y is 0 to Height.
+            // Let's just use subtraction and see.
+            
+            // Note: Since aspect ratio correction happens separately, u/v here are "Normalized Screen Coords inside the image area".
+            
+            // Final Screen Pixel
+            // u, v are 0..1 relative to the displayed image area.
+            
+            let u_final = u - offX_val;
+            // Correct Y direction:
+            // feature.y is 0..1 (Top..Bottom).
+            // Mouse Y is + (Up).
+            // If Mouse Up -> Image Down -> feature.y increases.
+            // offY is +. We need + result.
+            // So feature.y + offY ?
+            // Let's try:
+            let v_final = (feature.y - 0.5) * CONFIG.zoom + 0.5; // Re-apply zoom to Y
+            v_final -= offY_val; // Try minus
+            
+            const sx = offX + u_final * dispW;
+            const sy = offY + v_final * dispH;
+            
+            return { x: sx, y: sy };
+        }
+        const mouse = new THREE.Vector2();
+        const targetMouse = new THREE.Vector2();
+        
+        window.addEventListener('mousemove', (e) => {
+            // Normalize to -1..1
+            targetMouse.x = (e.clientX / window.innerWidth) * 2 - 1;
+            targetMouse.y = -(e.clientY / window.innerHeight) * 2 + 1;
+        });
+
+        // --- Render Loop ---
+        function animate() {
+            requestAnimationFrame(animate);
+            
+            // Smooth Mouse
+            mouse.lerp(targetMouse, 0.05);
+            uniforms.uMouse.value.copy(mouse);
+            
+            renderer.render(scene, camera);
+            renderHUD();
+        }
+        animate();
+        
+        // Start
+        initAI();
+
+        // --- UI Communication ---
+        const UI_CONFIG = [
+            { name: '视差强度', value: 0.15, min: 0.0, max: 0.5, step: 0.01, bind: 'uIntensity' },
+            { name: '对焦深度', value: 0.5, min: 0.0, max: 1.0, step: 0.01, bind: 'uFocus' },
+            { name: '画面缩放', value: 1.05, min: 1.0, max: 1.5, step: 0.01, bind: 'uZoom' },
+            { name: '显示追踪', value: true, type: 'checkbox', bind: 'showTracking' },
+            { name: '追踪样式', value: 0, type: 'select', options: ['Tech', 'Minimal', 'Crosshair'], bind: 'trackingStyle' }
+        ];
+
+        const SOURCE_OPTIONS = [
+            { name: '示例图片 2', value: 's2', type: 'image', path: '../sample/Sample2.jpg' },
+            { name: '示例图片 1', value: 's1', type: 'image', path: '../sample/sample1.jpg' },
+            { name: '示例图片 3', value: 's3', type: 'image', path: '../sample/Sample3.jpg' },
+            { name: '示例图片 4', value: 's4', type: 'image', path: '../sample/Sample4.jpg' }
+        ];
+
+        function sendConfig() {
+            if (window.parent) {
+                window.parent.postMessage({
+                    type: 'UI_CONFIG',
+                    config: UI_CONFIG,
+                    sources: SOURCE_OPTIONS
+                }, '*');
+            }
+        }
+
+        window.addEventListener('message', (event) => {
+            const data = event.data;
+            if (!data) return;
+
+            if (data.type === 'HANDSHAKE') sendConfig();
+
+            if (data.type === 'UPDATE_PARAM') {
+                if (data.key === 'uIntensity') uniforms.uIntensity.value = data.value;
+                if (data.key === 'uFocus') uniforms.uFocus.value = data.value;
+                if (data.key === 'uZoom') uniforms.uZoom.value = data.value;
+                if (data.key === 'showTracking') {
+                    CONFIG.showTracking = data.value;
+                    if (!data.value) ctx.clearRect(0, 0, overlayCanvas.width, overlayCanvas.height);
+                }
+                if (data.key === 'trackingStyle') {
+                    // Value is index or string? UnifiedRenderer sends index for select usually, or value?
+                    // Let's check logic. Usually it sends the value from the options array if possible, or index.
+                    // But standard <select> sends value.
+                    // Let's assume the UI sends the string value if options are strings.
+                    // If it sends index, we map it.
+                    // Let's support both just in case.
+                    const styles = ['Tech', 'Minimal', 'Crosshair'];
+                    if (typeof data.value === 'number') {
+                        CONFIG.trackingStyle = styles[data.value];
+                    } else {
+                        CONFIG.trackingStyle = data.value;
+                    }
+                }
+            }
+
+            if (data.type === 'LOAD_SOURCE') {
+                if (data.source.type === 'image') {
+                    currentImageURL = data.source.path;
+                    if (depthEstimator) {
+                        processImage(currentImageURL);
+                    }
+                }
+            }
+            
+             if (data.type === 'SAVE_IMAGE') {
+                 renderer.render(scene, camera);
+                 const link = document.createElement('a');
+                 link.download = 'depth-parallax.png';
+                 link.href = renderer.domElement.toDataURL('image/png');
+                 link.click();
+            }
+        });
+        
+        window.addEventListener('resize', () => {
+            renderer.setSize(window.innerWidth, window.innerHeight);
+            uniforms.uResolution.value.set(window.innerWidth, window.innerHeight);
+        });
+
+        sendConfig();
+
+    </script>
+</body>
+</html>

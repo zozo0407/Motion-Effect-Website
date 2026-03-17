@@ -1,0 +1,123 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Cyber Text</title>
+    <style>
+        body {
+            margin: 0;
+            background: #0f0f13;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+            font-family: 'Courier New', monospace;
+            overflow: hidden;
+        }
+        .glitch {
+            font-size: 80px;
+            font-weight: bold;
+            color: #fff;
+            position: relative;
+            text-transform: uppercase;
+        }
+        .glitch::before, .glitch::after {
+            content: attr(data-text);
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: #0f0f13;
+        }
+        .glitch::before {
+            left: 2px;
+            text-shadow: -1px 0 #ff00c1;
+            clip: rect(44px, 450px, 56px, 0);
+            animation: glitch-anim 5s infinite linear alternate-reverse;
+        }
+        .glitch::after {
+            left: -2px;
+            text-shadow: -1px 0 #00fff9;
+            clip: rect(44px, 450px, 56px, 0);
+            animation: glitch-anim2 5s infinite linear alternate-reverse;
+        }
+        @keyframes glitch-anim {
+            0% { clip: rect(10px, 9999px, 30px, 0); }
+            20% { clip: rect(80px, 9999px, 90px, 0); }
+            40% { clip: rect(40px, 9999px, 50px, 0); }
+            60% { clip: rect(20px, 9999px, 60px, 0); }
+            80% { clip: rect(60px, 9999px, 70px, 0); }
+            100% { clip: rect(90px, 9999px, 100px, 0); }
+        }
+        @keyframes glitch-anim2 {
+            0% { clip: rect(60px, 9999px, 70px, 0); }
+            20% { clip: rect(20px, 9999px, 30px, 0); }
+            40% { clip: rect(90px, 9999px, 100px, 0); }
+            60% { clip: rect(10px, 9999px, 40px, 0); }
+            80% { clip: rect(50px, 9999px, 60px, 0); }
+            100% { clip: rect(30px, 9999px, 80px, 0); }
+        }
+    </style>
+</head>
+<body>
+    <div class="glitch" data-text="FUTURE" id="text">FUTURE</div>
+
+    <script>
+        // --- Unified Protocol ---
+        const UI_CONFIG = [
+            { name: '字体大小', value: 80, min: 40, max: 150, bind: 'param1' },
+            { name: '速度', value: 5, min: 0.1, max: 10, bind: 'param2' }, // Duration (lower is faster)
+            { name: '偏移量', value: 2, min: 0, max: 10, bind: 'param3' }
+        ];
+
+        function sendConfig() {
+            if (window.parent) {
+                window.parent.postMessage({
+                    type: 'UI_CONFIG',
+                    config: UI_CONFIG,
+                    sources: []
+                }, '*');
+            }
+        }
+
+        window.addEventListener('message', (event) => {
+            const data = event.data;
+            if (!data) return;
+
+            if (data.type === 'HANDSHAKE') sendConfig();
+
+            if (data.type === 'UPDATE_PARAM') {
+                const el = document.getElementById('text');
+                const style = document.styleSheets[0].cssRules[3].style; // Hacky way to access pseudo styles, better to use CSS vars
+                
+                // Using CSS Variables for cleaner updates
+                if(!document.body.style.getPropertyValue('--offset')) {
+                    // Inject CSS vars if first run
+                    document.querySelector('style').textContent += `
+                        :root { --offset: 2px; --duration: 5s; }
+                        .glitch::before { left: var(--offset); animation-duration: var(--duration); }
+                        .glitch::after { left: calc(var(--offset) * -1); animation-duration: var(--duration); }
+                    `;
+                }
+
+                if (data.key === 'param1') {
+                    el.style.fontSize = `${data.value}px`;
+                }
+                if (data.key === 'param2') {
+                    // Value is Speed (high = fast), Duration should be low
+                    // Speed 5 -> Duration 1s
+                    // Speed 1 -> Duration 5s
+                    const duration = (6 - data.value) + 's';
+                    document.documentElement.style.setProperty('--duration', duration);
+                }
+                if (data.key === 'param3') {
+                    document.documentElement.style.setProperty('--offset', `${data.value}px`);
+                }
+            }
+        });
+
+        sendConfig();
+    </script>
+</body>
+</html>

@@ -1,0 +1,453 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Anomaly Audio Visualizer</title>
+    <style>
+        body { margin: 0; overflow: hidden; background: #000; font-family: 'Courier New', Courier, monospace; }
+        canvas { display: block; }
+        
+        /* Overlay UI Elements */
+        #overlay {
+            position: absolute; top: 0; left: 0; width: 100%; height: 100%;
+            background: rgba(0,0,0,0.8); display: flex; align-items: center; justify-content: center;
+            color: #ff4e42; font-family: monospace; cursor: pointer; z-index: 100;
+            flex-direction: column;
+            transition: opacity 0.5s;
+        }
+        #overlay h1 { font-size: 24px; letter-spacing: 2px; text-shadow: 0 0 10px #ff4e42; }
+        #overlay p { color: #888; font-size: 12px; }
+
+        /* 2D Visualizers Layer */
+        .visualizer-layer {
+            position: absolute;
+            top: 0; left: 0; width: 100%; height: 100%;
+            pointer-events: none;
+            z-index: 10;
+        }
+
+        /* Circular Visualizer (Background) */
+        #circular-canvas {
+            position: absolute;
+            top: 50%; left: 50%;
+            transform: translate(-50%, -50%);
+            width: 800px; height: 800px;
+            opacity: 0.6;
+        }
+
+        /* Spectrum Analyzer (Bottom) */
+        #spectrum-canvas {
+            position: absolute;
+            bottom: 0; left: 0;
+            width: 100%; height: 150px;
+            opacity: 0.8;
+        }
+
+        /* Data Panel (Top Right) */
+        .data-panel {
+            position: absolute;
+            top: 20px; right: 20px;
+            width: 250px;
+            background: rgba(10, 14, 23, 0.8);
+            border: 1px solid rgba(255, 78, 66, 0.3);
+            padding: 15px;
+            color: #ff4e42;
+            font-size: 12px;
+            z-index: 20;
+        }
+        .data-row {
+            display: flex; justify-content: space-between;
+            margin-bottom: 8px;
+            border-bottom: 1px solid rgba(255, 78, 66, 0.1);
+            padding-bottom: 4px;
+        }
+        .data-value { font-weight: bold; color: #fff; }
+    </style>
+    <script type="importmap">
+        {
+            "imports": {
+                "three": "../js/libs/three/three.module.js",
+                "three/addons/": "../js/libs/three/addons/"
+            }
+        }
+    </script>
+</head>
+<body>
+    <div id="overlay" style="display:none;">
+        <h1>⚠ 检测到异常信号</h1>
+        <p>[ 点击屏幕初始化控制协议 ]</p>
+    </div>
+
+    <div class="visualizer-layer">
+        <canvas id="circular-canvas"></canvas>
+        <canvas id="spectrum-canvas"></canvas>
+    </div>
+
+    <div class="data-panel">
+        <div class="data-row"><span>状态</span><span class="data-value" id="status-val">待机中</span></div>
+        <div class="data-row"><span>峰值频率</span><span class="data-value" id="peak-val">0 HZ</span></div>
+        <div class="data-row"><span>能量水平</span><span class="data-value" id="energy-val">0 J</span></div>
+        <div class="data-row"><span>稳定性</span><span class="data-value" id="stability-val">100%</span></div>
+    </div>
+
+    <script type="module">
+        import { UnifiedRenderer } from '../js/UnifiedRenderer.js';
+        import * as THREE from 'three';
+
+        // --- Shaders ---
+        const vertexShader = `
+            uniform float time;
+            uniform float audioLevel;
+            uniform float distortion;
+            varying vec3 vNormal;
+            varying vec3 vPosition;
+            
+            // Simplex Noise
+            vec3 mod289(vec3 x) { return x - floor(x * (1.0 / 289.0)) * 289.0; }
+            vec4 mod289(vec4 x) { return x - floor(x * (1.0 / 289.0)) * 289.0; }
+            vec4 permute(vec4 x) { return mod289(((x*34.0)+1.0)*x); }
+            vec4 taylorInvSqrt(vec4 r) { return 1.79284291400159 - 0.85373472095314 * r; }
+            
+            float snoise(vec3 v) {
+                const vec2 C = vec2(1.0/6.0, 1.0/3.0);
+                const vec4 D = vec4(0.0, 0.5, 1.0, 2.0);
+                vec3 i  = floor(v + dot(v, C.yyy));
+                vec3 x0 = v - i + dot(i, C.xxx);
+                vec3 g = step(x0.yzx, x0.xyz);
+                vec3 l = 1.0 - g;
+                vec3 i1 = min(g.xyz, l.zxy);
+                vec3 i2 = max(g.xyz, l.zxy);
+                vec3 x1 = x0 - i1 + C.xxx;
+                vec3 x2 = x0 - i2 + C.yyy;
+                vec3 x3 = x0 - D.yyy;
+                i = mod289(i);
+                vec4 p = permute(permute(permute(
+                        i.z + vec4(0.0, i1.z, i2.z, 1.0))
+                    + i.y + vec4(0.0, i1.y, i2.y, 1.0))
+                    + i.x + vec4(0.0, i1.x, i2.x, 1.0));
+                float n_ = 0.142857142857;
+                vec3 ns = n_ * D.wyz - D.xzx;
+                vec4 j = p - 49.0 * floor(p * ns.z * ns.z);
+                vec4 x_ = floor(j * ns.z);
+                vec4 y_ = floor(j - 7.0 * x_);
+                vec4 x = x_ *ns.x + ns.yyyy;
+                vec4 y = y_ *ns.x + ns.yyyy;
+                vec4 h = 1.0 - abs(x) - abs(y);
+                vec4 b0 = vec4(x.xy, y.xy);
+                vec4 b1 = vec4(x.zw, y.zw);
+                vec4 s0 = floor(b0)*2.0 + 1.0;
+                vec4 s1 = floor(b1)*2.0 + 1.0;
+                vec4 sh = -step(h, vec4(0.0));
+                vec4 a0 = b0.xzyw + s0.xzyw*sh.xxyy;
+                vec4 a1 = b1.xzyw + s1.xzyw*sh.zzww;
+                vec3 p0 = vec3(a0.xy, h.x);
+                vec3 p1 = vec3(a0.zw, h.y);
+                vec3 p2 = vec3(a1.xy, h.z);
+                vec3 p3 = vec3(a1.zw, h.w);
+                vec4 norm = taylorInvSqrt(vec4(dot(p0, p0), dot(p1, p1), dot(p2, p2), dot(p3, p3)));
+                p0 *= norm.x;
+                p1 *= norm.y;
+                p2 *= norm.z;
+                p3 *= norm.w;
+                vec4 m = max(0.6 - vec4(dot(x0, x0), dot(x1, x1), dot(x2, x2), dot(x3, x3)), 0.0);
+                m = m * m;
+                return 42.0 * dot(m*m, vec4(dot(p0, x0), dot(p1, x1), dot(p2, x2), dot(p3, x3)));
+            }
+            
+            void main() {
+                vNormal = normalize(normalMatrix * normal);
+                float slowTime = time * 0.3;
+                vec3 pos = position;
+                
+                // Noise based distortion
+                float noise = snoise(vec3(position.x * 0.5, position.y * 0.5, position.z * 0.5 + slowTime));
+                pos += normal * noise * 0.2 * distortion * (1.0 + audioLevel);
+                
+                vPosition = pos;
+                gl_Position = projectionMatrix * modelViewMatrix * vec4(pos, 1.0);
+            }
+        `;
+
+        const fragmentShader = `
+            uniform float time;
+            uniform vec3 color;
+            uniform float audioLevel;
+            varying vec3 vNormal;
+            varying vec3 vPosition;
+            
+            void main() {
+                vec3 viewDirection = normalize(cameraPosition - vPosition);
+                float fresnel = 1.0 - max(0.0, dot(viewDirection, vNormal));
+                fresnel = pow(fresnel, 2.0 + audioLevel * 2.0);
+                
+                float pulse = 0.8 + 0.2 * sin(time * 2.0);
+                
+                vec3 finalColor = color * fresnel * pulse * (1.0 + audioLevel * 0.8);
+                float alpha = fresnel * (0.7 - audioLevel * 0.3);
+                
+                gl_FragColor = vec4(finalColor, alpha);
+            }
+        `;
+
+        new UnifiedRenderer({
+            type: 'three',
+            params: {
+                rotationSpeed: 1.0,
+                distortion: 1.0,
+                reactivity: 1.0,
+                sensitivity: 5.0,
+                color: new THREE.Color('#2ec4b6'),
+                wireframe: true
+            },
+            init: (scope) => {
+                // UI Configuration
+                scope.setUI({
+                    rotationSpeed: { type: 'number', min: 0, max: 5, value: 1.0, label: '旋转速度' },
+                    distortion: { type: 'number', min: 0, max: 3, value: 1.0, label: '畸变强度' },
+                    reactivity: { type: 'number', min: 0, max: 2, value: 1.0, label: '音频响应' },
+                    sensitivity: { type: 'number', min: 1, max: 10, value: 5.0, label: '灵敏度' },
+                    color: { type: 'color', value: '#2ec4b6', label: '核心颜色' },
+                    wireframe: { type: 'boolean', value: true, label: '线框模式' },
+                    audioFile: { type: 'file', label: '上传音频', accept: 'audio/*' }
+                });
+
+                // --- 3D Scene Setup ---
+                scope.scene.fog = new THREE.FogExp2(0x0a0e17, 0.05);
+                
+                // Anomaly Object
+                const resolution = 32;
+                const radius = 2;
+                const geometry = new THREE.IcosahedronGeometry(radius, 4); // High detail
+                
+                scope.material = new THREE.ShaderMaterial({
+                    uniforms: {
+                        time: { value: 0 },
+                        color: { value: scope.params.color },
+                        audioLevel: { value: 0 },
+                        distortion: { value: scope.params.distortion }
+                    },
+                    vertexShader: vertexShader,
+                    fragmentShader: fragmentShader,
+                    wireframe: true,
+                    transparent: true,
+                    side: THREE.DoubleSide
+                });
+                
+                scope.anomaly = new THREE.Mesh(geometry, scope.material);
+                scope.scene.add(scope.anomaly);
+                
+                // Inner Glow (Simplified for UnifiedRenderer)
+                const glowGeom = new THREE.SphereGeometry(radius * 0.8, 32, 32);
+                const glowMat = new THREE.MeshBasicMaterial({
+                    color: scope.params.color,
+                    transparent: true,
+                    opacity: 0.3,
+                    blending: THREE.AdditiveBlending
+                });
+                scope.glow = new THREE.Mesh(glowGeom, glowMat);
+                scope.anomaly.add(scope.glow);
+
+                // Background Particles
+                const pGeom = new THREE.BufferGeometry();
+                const pCount = 1000;
+                const pPos = new Float32Array(pCount * 3);
+                for(let i=0; i<pCount*3; i++) {
+                    pPos[i] = (Math.random() - 0.5) * 60;
+                }
+                pGeom.setAttribute('position', new THREE.BufferAttribute(pPos, 3));
+                scope.particles = new THREE.Points(pGeom, new THREE.PointsMaterial({
+                    color: 0xffffff, size: 0.1, transparent: true, opacity: 0.5
+                }));
+                scope.scene.add(scope.particles);
+
+                // --- Audio System ---
+                const initAudio = () => {
+                    const AudioContext = window.AudioContext || window.webkitAudioContext;
+                    scope.audioContext = new AudioContext();
+                    scope.analyser = scope.audioContext.createAnalyser();
+                    scope.analyser.fftSize = 2048;
+                    scope.analyser.smoothingTimeConstant = 0.8;
+                    scope.dataArray = new Uint8Array(scope.analyser.frequencyBinCount);
+                    
+                    scope.audio = new Audio();
+                    scope.audio.crossOrigin = "anonymous";
+                    // Default Track
+                    scope.audio.src = '../sample/sample1.mp3';
+                    scope.audio.loop = true;
+                    
+                    const source = scope.audioContext.createMediaElementSource(scope.audio);
+                    source.connect(scope.analyser);
+                    scope.analyser.connect(scope.audioContext.destination);
+                    
+                    scope.audio.play().then(() => {
+                        document.getElementById('status-val').textContent = "活跃";
+                        document.getElementById('status-val').style.color = "#00ff00";
+                    }).catch(e => console.warn("Autoplay blocked"));
+                };
+
+                // Auto-init audio if possible, or wait for user interaction
+                // Since we removed the overlay, we try to init immediately.
+                // Browsers might block it, but we can try.
+                initAudio();
+
+                // --- 2D Canvas Setup ---
+                scope.circularCanvas = document.getElementById('circular-canvas');
+                scope.spectrumCanvas = document.getElementById('spectrum-canvas');
+                scope.cCtx = scope.circularCanvas.getContext('2d');
+                scope.sCtx = scope.spectrumCanvas.getContext('2d');
+                
+                const resize2D = () => {
+                    scope.circularCanvas.width = scope.circularCanvas.offsetWidth;
+                    scope.circularCanvas.height = scope.circularCanvas.offsetHeight;
+                    scope.spectrumCanvas.width = scope.spectrumCanvas.offsetWidth;
+                    scope.spectrumCanvas.height = scope.spectrumCanvas.offsetHeight;
+                };
+                window.addEventListener('resize', resize2D);
+                resize2D();
+
+                // Interaction - Fallback for autoplay block
+                document.body.addEventListener('click', () => {
+                    if (!scope.audioContext) initAudio();
+                    else if (scope.audioContext.state === 'suspended') scope.audioContext.resume();
+                }, { once: true });
+
+                scope.loadAudio = (url) => {
+                     if (scope.audio) {
+                         scope.audio.src = url;
+                         scope.audio.play();
+                     }
+                };
+            },
+            update: (state, scope) => {
+                const { time } = state;
+                let audioLevel = 0;
+
+                // Audio Analysis
+                if (scope.analyser) {
+                    scope.analyser.getByteFrequencyData(scope.dataArray);
+                    let sum = 0;
+                    for (let i = 0; i < scope.dataArray.length; i++) {
+                        sum += scope.dataArray[i];
+                    }
+                    // Calculate Level (0-1)
+                    audioLevel = (sum / scope.dataArray.length / 255) * scope.params.sensitivity;
+                    
+                    // Update Uniforms
+                    scope.material.uniforms.audioLevel.value = audioLevel * scope.params.reactivity;
+                    scope.material.uniforms.time.value = time;
+                    
+                    // Update UI Data
+                    if (Math.random() > 0.9) {
+                        document.getElementById('energy-val').textContent = (audioLevel * 1000).toFixed(0) + " J";
+                        document.getElementById('stability-val').textContent = (100 - audioLevel * 50).toFixed(1) + "%";
+                    }
+
+                    // --- Draw 2D Visualizers ---
+                    
+                    // 1. Circular
+                    const w = scope.circularCanvas.width;
+                    const h = scope.circularCanvas.height;
+                    const cx = w/2, cy = h/2;
+                    const ctx = scope.cCtx;
+                    ctx.clearRect(0, 0, w, h);
+                    
+                    ctx.beginPath();
+                    const radius = 200 + audioLevel * 50;
+                    
+                    // Use dynamic color from params
+                    const r = scope.params.color.r*255;
+                    const g = scope.params.color.g*255;
+                    const b = scope.params.color.b*255;
+                    
+                    ctx.strokeStyle = `rgba(${r}, ${g}, ${b}, 0.5)`;
+                    ctx.lineWidth = 6;
+                    
+                    for(let i=0; i<100; i++) {
+                        const angle = (i/100) * Math.PI * 2;
+                        const val = scope.dataArray[i * 2] / 255.0; // Low freqs
+                        const rad = radius + val * 100 * scope.params.reactivity;
+                        const x = cx + Math.cos(angle) * rad;
+                        const y = cy + Math.sin(angle) * rad;
+                        if (i===0) ctx.moveTo(x, y);
+                        else ctx.lineTo(x, y);
+                    }
+                    ctx.closePath();
+                    ctx.stroke();
+
+                    // 2. Spectrum
+                    const sCtx = scope.sCtx;
+                    const sw = scope.spectrumCanvas.width;
+                    const sh = scope.spectrumCanvas.height;
+                    sCtx.clearRect(0, 0, sw, sh);
+                    const barW = sw / 100;
+                    sCtx.fillStyle = `rgba(${r}, ${g}, ${b}, 0.5)`;
+                    
+                    for(let i=0; i<100; i++) {
+                        const h = (scope.dataArray[i] / 255) * sh * 0.8;
+                        sCtx.fillRect(i * barW, sh - h, barW - 1, h);
+                    }
+                }
+
+                // Force initial color sync on first frame if needed
+                if (!scope._colorSynced) {
+                    const r = scope.params.color.r*255;
+                    const g = scope.params.color.g*255;
+                    const b = scope.params.color.b*255;
+                    const cssColor = `rgb(${r}, ${g}, ${b})`;
+                    const cssRGBA = `rgba(${r}, ${g}, ${b}, 0.3)`;
+                    document.documentElement.style.setProperty('--main-color', cssColor);
+                    const panels = document.querySelectorAll('.data-panel, .data-row');
+                    panels.forEach(p => {
+                        p.style.borderColor = cssRGBA;
+                        p.style.color = cssColor;
+                    });
+                    scope._colorSynced = true;
+                }
+
+                // Animation
+                if (scope.anomaly) {
+                    scope.anomaly.rotation.y += 0.005 * scope.params.rotationSpeed;
+                    scope.anomaly.rotation.z += 0.002 * scope.params.rotationSpeed;
+                }
+                
+                // Particle movement
+                if (scope.particles) {
+                    scope.particles.rotation.y = time * 0.05;
+                }
+            },
+            onParamChange: (key, value, scope) => {
+                if (key === 'distortion') scope.material.uniforms.distortion.value = value;
+                if (key === 'color') {
+                    // Update all color elements
+                    scope.material.uniforms.color.value.set(value);
+                    scope.glow.material.color.set(value);
+                    // Update overlay UI colors
+                    const rgb = new THREE.Color(value);
+                    const cssColor = `rgb(${rgb.r*255}, ${rgb.g*255}, ${rgb.b*255})`;
+                    const cssRGBA = `rgba(${rgb.r*255}, ${rgb.g*255}, ${rgb.b*255}, 0.3)`;
+                    
+                    document.documentElement.style.setProperty('--main-color', cssColor);
+                    const overlay = document.getElementById('overlay');
+                    if(overlay) {
+                        overlay.style.color = cssColor;
+                        const h1 = overlay.querySelector('h1');
+                        if(h1) h1.style.textShadow = `0 0 10px ${cssColor}`;
+                    }
+                    
+                    const panels = document.querySelectorAll('.data-panel, .data-row');
+                    panels.forEach(p => {
+                        p.style.borderColor = cssRGBA;
+                        p.style.color = cssColor;
+                    });
+                }
+                if (key === 'wireframe') scope.material.wireframe = value;
+                if (key === 'audioFile') {
+                    const url = value.url || value;
+                    if (typeof url === 'string') scope.loadAudio(url);
+                }
+            }
+        });
+    </script>
+</body>
+</html>

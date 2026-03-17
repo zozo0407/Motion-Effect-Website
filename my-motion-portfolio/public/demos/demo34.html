@@ -1,0 +1,186 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>测试-1</title>
+  <style>
+    html, body { margin: 0; padding: 0; width: 100%; height: 100%; background: #000; overflow: hidden; }
+    #container { width: 100vw; height: 100vh; }
+  </style>
+  <script async src="https://unpkg.com/es-module-shims@1.8.0/dist/es-module-shims.js"></script>
+  <script type="importmap">
+    {
+      "imports": {
+        "three": "../js/libs/three/three.module.js",
+        "three/addons/": "../js/libs/three/addons/"
+      }
+    }
+  </script>
+</head>
+<body>
+  <div id="container"></div>
+  <script type="module">
+    import * as THREE from 'three';
+    import * as TWEEN from 'https://unpkg.com/@tweenjs/tween.js@23.1.1/dist/tween.esm.js';
+
+    const __EXPORT_TEXT = "/**\n * ScriptScene.js - Exported from CupCut Motion Lab\n * \n * 适配说明：\n * 1. 本文件为剪映/特效平台通用适配层\n * 2. 包含生命周期管理和渲染循环\n * 3. 核心逻辑位于 setupScene 和 setupAnimations\n */\n\nconst TWEEN = require('../lib/tween');\nconst THREE = require('three');\n\nclass ScriptScene {\n  constructor(amgScene = null, container = null) {\n    if (amgScene) {\n      this.scene = new THREE.Scene();\n      this.scene._amgScene = amgScene;\n    } else {\n      this.scene = new THREE.Scene();\n    }\n    this.camera = null;\n    this.renderer = null;\n    this.scene.background = new THREE.Color(0x000000);\n    this.isAnimating = false;\n    this.animationFrameId = null;\n    this.sceneObjects = { tweens: [] };\n\n    this.initCoreObjects();\n    if (container) {\n      this.init(container);\n    }\n  }\n\n  destroy() {\n    this.isAnimating = false;\n    if (this.animationFrameId !== null && typeof cancelAnimationFrame !== 'undefined') {\n      cancelAnimationFrame(this.animationFrameId);\n      this.animationFrameId = null;\n    }\n    if (this.renderer) {\n      this.renderer.setAnimationLoop(null);\n      this.renderer.dispose();\n      if (this.renderer.domElement && this.renderer.domElement.parentNode) {\n        this.renderer.domElement.parentNode.removeChild(this.renderer.domElement);\n      }\n    }\n    if (this.scene) {\n      this.scene.dispose();\n    }\n    if (this.sceneObjects && this.sceneObjects.tweens) {\n      this.sceneObjects.tweens.forEach(tween => {\n          if(tween && tween.stop) tween.stop();\n      });\n    }\n  }\n\n  initCoreObjects() {\n    // Default config suitable for CapCut mobile context\n    // In real engine, window.innerWidth might be mocked or fixed\n    if (typeof window !== 'undefined') {\n        window.innerWidth = window.innerWidth || 720; \n        window.innerHeight = window.innerHeight || 1280;\n        window.devicePixelRatio = window.devicePixelRatio || 2;\n    }\n\n    this.camera = new THREE.PerspectiveCamera(75, 720 / 1280, 0.1, 1000);\n    this.camera.position.z = 5;\n    this.scene.add(this.camera);\n\n    if (this.scene._amgScene == null) {\n      this.renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });\n      this.renderer.outputColorSpace = THREE.LinearSRGBColorSpace;\n    }\n    if (this.renderer) {\n      this.renderer.setSize(window.innerWidth || 720, window.innerHeight || 1280);\n      this.renderer.setPixelRatio(window.devicePixelRatio || 1);\n    }\n    \n    this.TWEEN = TWEEN;\n    this.Duration = 3000;\n  }\n\n  loadTextures() {\n    return Promise.resolve(); // 默认实现，返回空 Promise\n  }\n\n  //===begin===\n  setupScene() {\n    console.log(\"Initializing Scene Objects...\");\n    \n    // --- Generated Code Injection Point: Setup ---\n    // 1. Environment (Crucial for Metal)\n                const pmremGenerator = new THREE.PMREMGenerator(this.renderer);\n                pmremGenerator.compileEquirectangularShader();\n                this.scene.environment = pmremGenerator.fromScene(new RoomEnvironment()).texture;\n                this.scene.background = new THREE.Color(0x111111);\n\n                // 2. Lights\n                const ambientLight = new THREE.AmbientLight(0xffffff, 0.5);\n                this.scene.add(ambientLight);\n\n                const dirLight = new THREE.DirectionalLight(0xffffff, 2);\n                dirLight.position.set(5, 5, 5);\n                this.scene.add(dirLight);\n\n                const pointLight = new THREE.PointLight(0x00CAE0, 5); // Cyan accent\n                pointLight.position.set(-5, 0, 5);\n                this.scene.add(pointLight);\n\n                // 3. Metal Sphere\n                const geometry = new THREE.SphereGeometry(2, 64, 64);\n                const material = new THREE.MeshStandardMaterial({\n                    color: 0xffffff,\n                    metalness: 1.0,\n                    roughness: 0.1,\n                    envMapIntensity: 1.0\n                });\n                \n                const sphere = new THREE.Mesh(geometry, material);\n                sphere.name = 'MetalSphere';\n                this.scene.add(sphere);\n\n                // Save reference for updates\n                this.sceneObjects.sphere = sphere;\n    // ---------------------------------------------\n\n    this.setupAnimations();\n    return this.sceneObjects;\n  }\n\n  setupAnimations() {\n    console.log(\"Setting up Animations...\");\n    this.sceneObjects.tweens = [];\n    \n    // --- Generated Code Injection Point: Animation ---\n    // Initial Animation: Scale Up\n                if (this.sceneObjects.sphere) {\n                    this.sceneObjects.sphere.scale.set(0, 0, 0);\n                    const tween = new this.TWEEN.Tween(this.sceneObjects.sphere.scale)\n                        .to({ x: 1, y: 1, z: 1 }, 1500)\n                        .easing(this.TWEEN.Easing.Elastic.Out)\n                        .start();\n                    this.sceneObjects.tweens.push(tween);\n                }\n    // -------------------------------------------------\n  }\n  //===end===\n\n  init(container) {\n    if (this.renderer && container) {\n      container.appendChild(this.renderer.domElement);\n    }\n    if (typeof window !== 'undefined') {\n      window.addEventListener('resize', () => this.handleResize());\n    }\n  }\n\n  start(updateCallback) {\n    if (this.isAnimating) return;\n    this.isAnimating = true;\n    if (updateCallback) {\n        const animateFrame = () => {\n            if (!this.isAnimating) return;\n            updateCallback();\n            this.animationFrameId = requestAnimationFrame(animateFrame);\n        };\n        animateFrame();\n    } else {\n        this.renderer.setAnimationLoop(() => {\n            this.update();\n        });\n    }\n  }\n\n  updateScene(timestamp) {\n    if (!this.isAnimating) this.isAnimating = true;\n    this.defaultUpdate(timestamp);\n  }\n\n  update() {\n    if (this.renderer) {\n      this.renderer.render(this.scene, this.camera);\n    }\n  }\n\n  defaultUpdate(timestamp) {\n    if (this.sceneObjects.tweens && this.sceneObjects.tweens.length > 0) {\n      this.sceneObjects.tweens.forEach(tween => tween.update(timestamp));\n    }\n    if (this.TWEEN) this.TWEEN.update(timestamp);\n    this.update();\n  }\n\n  seekToTime(time) {\n    const t = typeof time === 'number' ? time : 0;\n    this.defaultUpdate(t);\n  }\n  \n  handleResize() {\n      if(!this.camera || !this.renderer) return;\n      if (typeof window !== 'undefined') {\n        this.camera.aspect = window.innerWidth / window.innerHeight;\n        this.camera.updateProjectionMatrix();\n        this.renderer.setSize(window.innerWidth, window.innerHeight);\n      }\n  }\n}\n\nmodule.exports = ScriptScene;\n";
+
+    class ScriptScene {
+      constructor(amgScene = null, container = null) {
+        this.scene = new THREE.Scene();
+        this.camera = null;
+        this.renderer = null;
+        this.sceneObjects = { tweens: [] };
+        this.isAnimating = false;
+        this.animationFrameId = null;
+        this.TWEEN = TWEEN;
+        this.Duration = 2000;
+        this.texture1 = null;
+        this.texture2 = null;
+
+        this.initCoreObjects();
+        if (container) this.init(container);
+      }
+
+      initCoreObjects() {
+        this.camera = new THREE.PerspectiveCamera(53.1, window.innerWidth / window.innerHeight, 0.1, 10000);
+        this.camera.position.z = 10;
+        this.scene.add(this.camera);
+        this.renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+        this.renderer.outputColorSpace = THREE.SRGBColorSpace;
+        this.renderer.setSize(window.innerWidth, window.innerHeight);
+        this.renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
+      }
+
+      init(container) {
+        container.appendChild(this.renderer.domElement);
+        window.addEventListener('resize', () => this.handleResize());
+      }
+
+      handleResize() {
+        if (!this.camera || !this.renderer) return;
+        this.camera.aspect = window.innerWidth / window.innerHeight;
+        this.camera.updateProjectionMatrix();
+        this.renderer.setSize(window.innerWidth, window.innerHeight);
+      }
+
+      start(updateCallback) {
+        if (this.isAnimating) return;
+        this.isAnimating = true;
+        const animateFrame = (t) => {
+          if (!this.isAnimating) return;
+          updateCallback(t);
+          this.animationFrameId = requestAnimationFrame(animateFrame);
+        };
+        this.animationFrameId = requestAnimationFrame(animateFrame);
+      }
+
+      update() {
+        if (this.renderer) this.renderer.render(this.scene, this.camera);
+      }
+
+      defaultUpdate(timestamp) {
+        if (this.TWEEN && typeof this.TWEEN.update === 'function') {
+          this.TWEEN.update(timestamp);
+        } else if (this.sceneObjects && this.sceneObjects.tweens && this.sceneObjects.tweens.length > 0) {
+          this.sceneObjects.tweens.forEach(tween => {
+            if (tween && typeof tween.update === 'function') tween.update(timestamp);
+          });
+        }
+        this.update();
+      }
+
+  setupScene() {
+    console.log("Initializing Scene Objects...");
+    
+    // --- Generated Code Injection Point: Setup ---
+    // 1. Environment (Crucial for Metal)
+                const pmremGenerator = new THREE.PMREMGenerator(this.renderer);
+                pmremGenerator.compileEquirectangularShader();
+                this.scene.environment = pmremGenerator.fromScene(new RoomEnvironment()).texture;
+                this.scene.background = new THREE.Color(0x111111);
+
+                // 2. Lights
+                const ambientLight = new THREE.AmbientLight(0xffffff, 0.5);
+                this.scene.add(ambientLight);
+
+                const dirLight = new THREE.DirectionalLight(0xffffff, 2);
+                dirLight.position.set(5, 5, 5);
+                this.scene.add(dirLight);
+
+                const pointLight = new THREE.PointLight(0x00CAE0, 5); // Cyan accent
+                pointLight.position.set(-5, 0, 5);
+                this.scene.add(pointLight);
+
+                // 3. Metal Sphere
+                const geometry = new THREE.SphereGeometry(2, 64, 64);
+                const material = new THREE.MeshStandardMaterial({
+                    color: 0xffffff,
+                    metalness: 1.0,
+                    roughness: 0.1,
+                    envMapIntensity: 1.0
+                });
+                
+                const sphere = new THREE.Mesh(geometry, material);
+                sphere.name = 'MetalSphere';
+                this.scene.add(sphere);
+
+                // Save reference for updates
+                this.sceneObjects.sphere = sphere;
+    // ---------------------------------------------
+
+    this.setupAnimations();
+    return this.sceneObjects;
+  }
+
+  setupAnimations() {
+    console.log("Setting up Animations...");
+    this.sceneObjects.tweens = [];
+    
+    // --- Generated Code Injection Point: Animation ---
+    // Initial Animation: Scale Up
+                if (this.sceneObjects.sphere) {
+                    this.sceneObjects.sphere.scale.set(0, 0, 0);
+                    const tween = new this.TWEEN.Tween(this.sceneObjects.sphere.scale)
+                        .to({ x: 1, y: 1, z: 1 }, 1500)
+                        .easing(this.TWEEN.Easing.Elastic.Out)
+                        .start();
+                    this.sceneObjects.tweens.push(tween);
+                }
+    // -------------------------------------------------
+  }
+    }
+
+    const container = document.getElementById('container');
+    const s = new ScriptScene(null, container);
+    window.__scriptScene = s;
+
+    async function boot() {
+      
+      if (typeof s.setupScene === 'function') await s.setupScene();
+      s.start((t) => s.defaultUpdate(t));
+    }
+    boot();
+
+    window.addEventListener('message', (e) => {
+      const d = e.data;
+      if (!d || !d.type) return;
+      if (d.type === 'HANDSHAKE') {
+        parent.postMessage({ type: 'UI_CONFIG', config: [] }, '*');
+      }
+      if (d.type === 'EXPORT_SCRIPT_SCENE') {
+        const blob = new Blob([__EXPORT_TEXT], { type: 'application/javascript' });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = 'scriptScene.js';
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        URL.revokeObjectURL(url);
+      }
+    });
+  </script>
+</body>
+</html>

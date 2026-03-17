@@ -1,0 +1,169 @@
+/**
+ * ScriptScene.js - Exported from CupCut Motion Lab
+ * 
+ * 适配说明：
+ * 1. 本文件为剪映/特效平台通用适配层
+ * 2. 包含生命周期管理和渲染循环
+ * 3. 核心逻辑位于 setupScene 和 setupAnimations
+ */
+
+const TWEEN = require('../lib/tween');
+const THREE = require('three');
+
+class ScriptScene {
+  constructor(amgScene = null, container = null) {
+    if (amgScene) {
+      this.scene = new THREE.Scene();
+      this.scene._amgScene = amgScene;
+    } else {
+      this.scene = new THREE.Scene();
+    }
+    this.camera = null;
+    this.renderer = null;
+    this.scene.background = new THREE.Color(0x000000);
+    this.isAnimating = false;
+    this.animationFrameId = null;
+    this.sceneObjects = { tweens: [] };
+
+    this.initCoreObjects();
+    if (container) {
+      this.init(container);
+    }
+  }
+
+  destroy() {
+    this.isAnimating = false;
+    if (this.animationFrameId !== null && typeof cancelAnimationFrame !== 'undefined') {
+      cancelAnimationFrame(this.animationFrameId);
+      this.animationFrameId = null;
+    }
+    if (this.renderer) {
+      this.renderer.setAnimationLoop(null);
+      this.renderer.dispose();
+      if (this.renderer.domElement && this.renderer.domElement.parentNode) {
+        this.renderer.domElement.parentNode.removeChild(this.renderer.domElement);
+      }
+    }
+    if (this.scene) {
+      this.scene.dispose();
+    }
+    if (this.sceneObjects && this.sceneObjects.tweens) {
+      this.sceneObjects.tweens.forEach(tween => {
+          if(tween && tween.stop) tween.stop();
+      });
+    }
+  }
+
+  initCoreObjects() {
+    // Default config suitable for CapCut mobile context
+    // In real engine, window.innerWidth might be mocked or fixed
+    if (typeof window !== 'undefined') {
+        window.innerWidth = window.innerWidth || 720; 
+        window.innerHeight = window.innerHeight || 1280;
+        window.devicePixelRatio = window.devicePixelRatio || 2;
+    }
+
+    this.camera = new THREE.PerspectiveCamera(75, 720 / 1280, 0.1, 1000);
+    this.camera.position.z = 5;
+    this.scene.add(this.camera);
+
+    if (this.scene._amgScene == null) {
+      this.renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+      this.renderer.outputColorSpace = THREE.LinearSRGBColorSpace;
+    }
+    if (this.renderer) {
+      this.renderer.setSize(window.innerWidth || 720, window.innerHeight || 1280);
+      this.renderer.setPixelRatio(window.devicePixelRatio || 1);
+    }
+    
+    this.TWEEN = TWEEN;
+    this.Duration = 3000;
+  }
+
+  loadTextures() {
+    return Promise.resolve(); // 默认实现，返回空 Promise
+  }
+
+  //===begin===
+  setupScene() {
+    console.log("Initializing Scene Objects...");
+    
+    // --- Generated Code Injection Point: Setup ---
+    /*{{SETUP_CODE}}*/
+    // ---------------------------------------------
+
+    this.setupAnimations();
+    return this.sceneObjects;
+  }
+
+  setupAnimations() {
+    console.log("Setting up Animations...");
+    this.sceneObjects.tweens = [];
+    
+    // --- Generated Code Injection Point: Animation ---
+    /*{{ANIMATION_CODE}}*/
+    // -------------------------------------------------
+  }
+  //===end===
+
+  init(container) {
+    if (this.renderer && container) {
+      container.appendChild(this.renderer.domElement);
+    }
+    if (typeof window !== 'undefined') {
+      window.addEventListener('resize', () => this.handleResize());
+    }
+  }
+
+  start(updateCallback) {
+    if (this.isAnimating) return;
+    this.isAnimating = true;
+    if (updateCallback) {
+        const animateFrame = () => {
+            if (!this.isAnimating) return;
+            updateCallback();
+            this.animationFrameId = requestAnimationFrame(animateFrame);
+        };
+        animateFrame();
+    } else {
+        this.renderer.setAnimationLoop(() => {
+            this.update();
+        });
+    }
+  }
+
+  updateScene(timestamp) {
+    if (!this.isAnimating) this.isAnimating = true;
+    this.defaultUpdate(timestamp);
+  }
+
+  update() {
+    if (this.renderer) {
+      this.renderer.render(this.scene, this.camera);
+    }
+  }
+
+  defaultUpdate(timestamp) {
+    if (this.sceneObjects.tweens && this.sceneObjects.tweens.length > 0) {
+      this.sceneObjects.tweens.forEach(tween => tween.update(timestamp));
+    }
+    if (this.TWEEN) this.TWEEN.update(timestamp);
+    this.update();
+  }
+
+  seekToTime(time) {
+    const t = typeof time === 'number' ? time : 0;
+    this.defaultUpdate(t);
+  }
+  
+  handleResize() {
+      if(!this.camera || !this.renderer) return;
+      if (typeof window !== 'undefined') {
+        this.camera.aspect = window.innerWidth / window.innerHeight;
+        this.camera.updateProjectionMatrix();
+        this.renderer.setSize(window.innerWidth, window.innerHeight);
+      }
+  }
+}
+
+module.exports = ScriptScene;

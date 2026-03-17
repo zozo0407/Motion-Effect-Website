@@ -1,0 +1,111 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Bloom Module Demo</title>
+    <style>
+        body { margin: 0; overflow: hidden; background-color: #000; }
+    </style>
+    <!-- Import Maps Polyfill -->
+    <script async src="https://unpkg.com/es-module-shims@1.8.0/dist/es-module-shims.js"></script>
+    <script type="importmap">
+        {
+            "imports": {
+                "three": "https://unpkg.com/three@0.160.0/build/three.module.js",
+                "three/addons/": "https://unpkg.com/three@0.160.0/examples/jsm/"
+            }
+        }
+    </script>
+</head>
+<body>
+    <script type="module">
+        import * as THREE from 'three';
+        import { UnifiedRenderer } from '../js/UnifiedRenderer.js';
+        import { useBloom } from '../js/modules/PostProcessing.js';
+
+        let bloom;
+
+        new UnifiedRenderer({
+            type: 'three',
+            
+            // Initial Parameters
+            params: {
+                color: '#ff0055',
+                bloomStrength: 1.5,
+                bloomRadius: 0.4,
+                bloomThreshold: 0
+            },
+
+            // Initialization
+            init: (sketch) => {
+                const { scene, params } = sketch;
+
+                // 1. Create a simple glowing object
+                const geometry = new THREE.IcosahedronGeometry(1, 1);
+                const material = new THREE.MeshBasicMaterial({ 
+                    color: new THREE.Color(params.color)
+                });
+                sketch.mesh = new THREE.Mesh(geometry, material);
+                scene.add(sketch.mesh);
+
+                // Add a wireframe for extra techy look
+                const wiregeo = new THREE.IcosahedronGeometry(1.2, 1);
+                const wiremat = new THREE.MeshBasicMaterial({ 
+                    color: 0xffffff, 
+                    wireframe: true,
+                    transparent: true,
+                    opacity: 0.3
+                });
+                sketch.wire = new THREE.Mesh(wiregeo, wiremat);
+                scene.add(sketch.wire);
+
+                // 2. Enable Bloom Module (One-line magic!)
+                bloom = useBloom(sketch, {
+                    strength: params.bloomStrength,
+                    radius: params.bloomRadius,
+                    threshold: params.bloomThreshold
+                });
+
+                // 3. Setup UI
+                sketch.setUI([
+                    { name: 'Color', value: params.color, type: 'color', bind: 'color' },
+                    { name: 'Bloom Strength', value: params.bloomStrength, min: 0, max: 3, step: 0.1, bind: 'bloomStrength' },
+                    { name: 'Bloom Radius', value: params.bloomRadius, min: 0, max: 1, step: 0.01, bind: 'bloomRadius' },
+                    { name: 'Threshold', value: params.bloomThreshold, min: 0, max: 1, step: 0.01, bind: 'bloomThreshold' }
+                ]);
+            },
+
+            // Animation Loop
+            update: ({ time }, sketch) => {
+                const { mesh, wire } = sketch;
+                if (mesh) {
+                    mesh.rotation.x = time * 0.5;
+                    mesh.rotation.y = time * 0.3;
+                    // Pulse effect
+                    const scale = 1 + Math.sin(time * 2) * 0.1;
+                    mesh.scale.setScalar(scale);
+                }
+                if (wire) {
+                    wire.rotation.x = time * 0.5;
+                    wire.rotation.y = time * 0.3;
+                }
+            },
+
+            // Parameter Handling
+            onParamChange: (key, value, sketch) => {
+                if (key === 'color' && sketch.mesh) {
+                    sketch.mesh.material.color.set(value);
+                }
+                
+                // Update Bloom parameters via the module instance
+                if (bloom && bloom.bloomPass) {
+                    if (key === 'bloomStrength') bloom.bloomPass.strength = value;
+                    if (key === 'bloomRadius') bloom.bloomPass.radius = value;
+                    if (key === 'bloomThreshold') bloom.bloomPass.threshold = value;
+                }
+            }
+        });
+    </script>
+</body>
+</html>

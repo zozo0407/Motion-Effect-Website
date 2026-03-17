@@ -1,0 +1,192 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Demo 25 - Liquid Displacement</title>
+    <!-- Dependencies -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+    
+    <style>
+        body { margin: 0; overflow: hidden; background-color: #000; }
+        canvas { display: block; }
+    </style>
+</head>
+<body>
+    <script>
+        // --- Configuration & Globals ---
+        let scene, camera, renderer;
+        let liquidMesh;
+        let liquidTexture;
+        let clock = new THREE.Clock();
+        let uniforms;
+        
+        // --- Communication Protocol ---
+        const UI_CONFIG = [
+            { name: 'Distortion', value: 1.0, min: 0.0, max: 5.0, step: 0.1, bind: 'uDistortion' },
+            { name: 'Frequency', value: 2.0, min: 0.1, max: 10.0, step: 0.1, bind: 'uFreq' },
+            { name: 'Speed', value: 1.0, min: 0.1, max: 5.0, step: 0.1, bind: 'uSpeed' },
+            { name: 'Color', type: 'color', value: '#00ffff', bind: 'uColor' },
+            { name: 'Reset', type: 'button', bind: 'cmd_reset', text: 'Reset Liquid' }
+        ];
+
+        function sendConfig() {
+            if (window.parent) {
+                window.parent.postMessage({
+                    type: 'UI_CONFIG',
+                    config: UI_CONFIG
+                }, '*');
+            }
+        }
+
+        window.addEventListener('message', (event) => {
+            const data = event.data;
+            if (!data) return;
+
+            if (data.type === 'HANDSHAKE') sendConfig();
+
+            if (data.type === 'UPDATE_PARAM') {
+                if (data.key === 'uDistortion') {
+                    uniforms.uDistortion.value = parseFloat(data.value);
+                }
+                if (data.key === 'uFreq') {
+                    uniforms.uFreq.value = parseFloat(data.value);
+                }
+                if (data.key === 'uSpeed') {
+                    uniforms.uSpeed.value = parseFloat(data.value);
+                }
+                if (data.key === 'uColor') {
+                    uniforms.uColor.value = new THREE.Color(data.value);
+                }
+                if (data.key === 'cmd_reset') {
+                    uniforms.uTime.value = 0;
+                }
+            }
+            
+            // Standard Protocol: LOAD_SOURCE
+            if (data.type === 'LOAD_SOURCE') {
+                const src = data.source;
+                if (src.type === 'image' || (src.type === 'file' && src.value.match(/\.(jpg|jpeg|png|gif)$/i))) {
+                    const path = src.path || src.value || src.url;
+                    if (path) {
+                        new THREE.TextureLoader().load(path, (texture) => {
+                            if (liquidTexture) liquidTexture.dispose();
+                            liquidTexture = texture;
+                            updateMaterial();
+                        });
+                    }
+                }
+            }
+        });
+
+        // --- Three.js Setup ---
+
+        function setup() {
+            const container = document.body;
+            
+            scene = new THREE.Scene();
+            camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
+            camera.position.z = 5;
+            
+            renderer = new THREE.WebGLRenderer({ antialias: true });
+            renderer.setSize(window.innerWidth, window.innerHeight);
+            renderer.setPixelRatio(window.devicePixelRatio);
+            container.appendChild(renderer.domElement);
+            
+            // Create Default Texture (Procedural Noise)
+            createLiquidTexture();
+            
+            // Create Plane
+            const geometry = new THREE.PlaneGeometry(10, 10, 32, 32);
+            const material = new THREE.ShaderMaterial({
+                uniforms: uniforms,
+                side: THREE.DoubleSide
+            });
+            
+            liquidMesh = new THREE.Mesh(geometry, material);
+            scene.add(liquidMesh);
+            
+            // Lighting
+            const ambientLight = new THREE.AmbientLight(0x404040, 0.5);
+            scene.add(ambientLight);
+            
+            const pointLight = new THREE.PointLight(0xffffff, 1, 100);
+            pointLight.position.set(0, 0, 10);
+            scene.add(pointLight);
+            
+            sendConfig();
+            animate();
+        }
+        
+        function createLiquidTexture() {
+            const canvas = document.createElement('canvas');
+            canvas.width = 512;
+            canvas.height = 512;
+            const ctx = canvas.getContext('2d');
+            
+            // Draw colorful liquid noise pattern
+            ctx.fillStyle = '#000000';
+            ctx.fillRect(0, 0, 512, 512);
+            
+            const time = 0;
+            const gridSize = 32;
+            const cellSize = 512 / gridSize;
+            
+            for (let y = 0; y < gridSize; y++) {
+                for (let x = 0; x < gridSize; x++) {
+                    // Create a more vibrant pattern with colors
+                    const noiseVal = Math.sin(x * 0.1 + time) * Math.cos(y * 0.1 + time) * 0.5;
+                    const val = (noiseVal + 1) * 127;
+                    
+                    // Color based on position for better visibility
+                    const hue = (x + y) * 5 + time * 50;
+                    const sat = 70;
+                    const light = 50 + val * 50;
+                    ctx.fillStyle = `hsl(${hue}, ${sat}%, ${light}%)`;
+                    
+                    ctx.fillRect(x * cellSize, y * cellSize, cellSize, cellSize);
+                }
+            }
+            
+            liquidTexture = new THREE.CanvasTexture(canvas);
+        }
+        
+        function updateMaterial() {
+            if (!uniforms) {
+                uniforms = {
+                    uTime: { value: 0 },
+                    uDistortion: { value: 1.0 },
+                    uFreq: { value: 2.0 },
+                    uSpeed: { value: 1.0 },
+                    uColor: { value: new THREE.Color('#00ffff') },
+                    uTexture: { value: liquidTexture }
+                };
+            }
+            
+            if (liquidMesh) {
+                liquidMesh.material.uniforms = uniforms;
+            }
+        }
+
+        function animate() {
+            requestAnimationFrame(animate);
+        }
+
+        function animate() {
+            const delta = clock.getDelta();
+            
+            if (uniforms) {
+                uniforms.uTime.value += delta * uniforms.uSpeed.value;
+            }
+            
+            renderer.render(scene, camera);
+        }
+
+        function windowResized() {
+            camera.aspect = window.innerWidth / window.innerHeight;
+            camera.updateProjectionMatrix();
+            renderer.setSize(window.innerWidth, window.innerHeight);
+        }
+    </script>
+</body>
+</html>

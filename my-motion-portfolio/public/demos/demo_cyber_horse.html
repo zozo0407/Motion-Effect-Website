@@ -1,0 +1,305 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>TouchDesigner Style Particles</title>
+    <style>
+        body { margin: 0; overflow: hidden; background-color: #000; }
+        
+        /* Hidden File Input */
+        #file-input {
+            display: none;
+        }
+        
+        /* Custom Upload Button Overlay */
+        #upload-overlay {
+            position: absolute;
+            bottom: 30px;
+            left: 50%;
+            transform: translateX(-50%);
+            display: flex;
+            gap: 20px;
+            z-index: 100;
+        }
+        
+        .custom-btn {
+            background: rgba(255, 255, 255, 0.1);
+            backdrop-filter: blur(10px);
+            border: 1px solid rgba(255, 255, 255, 0.2);
+            color: #fff;
+            padding: 12px 24px;
+            border-radius: 30px;
+            cursor: pointer;
+            font-family: 'Courier New', Courier, monospace;
+            font-weight: bold;
+            font-size: 14px;
+            transition: all 0.3s ease;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+        }
+        
+        .custom-btn:hover {
+            background: rgba(255, 255, 255, 0.3);
+            transform: scale(1.05);
+            box-shadow: 0 0 20px rgba(0, 200, 255, 0.5);
+        }
+        
+        .custom-btn:active {
+            transform: scale(0.95);
+        }
+    </style>
+    <!-- Import Maps Polyfill -->
+    <script async src="https://unpkg.com/es-module-shims@1.8.0/dist/es-module-shims.js"></script>
+    <script type="importmap">
+        {
+            "imports": {
+                "three": "https://unpkg.com/three@0.160.0/build/three.module.js",
+                "three/addons/": "https://unpkg.com/three@0.160.0/examples/jsm/"
+            }
+        }
+    </script>
+</head>
+<body>
+    <!-- File Input -->
+    <input type="file" id="file-input" accept=".glb,.gltf,.png,.jpg,.jpeg">
+    
+    <!-- Custom UI Overlay -->
+    <div id="upload-overlay">
+        <button class="custom-btn" onclick="document.getElementById('file-input').click()">📁 Upload Model / Image</button>
+        <button class="custom-btn" id="explode-btn">💥 Explode / Assemble</button>
+    </div>
+
+    <script type="module">
+        import * as THREE from 'three';
+        import { UnifiedRenderer } from '../js/UnifiedRenderer.js';
+        import { UnrealBloomPass } from "three/addons/postprocessing/UnrealBloomPass.js";
+        import { EffectComposer } from "three/addons/postprocessing/EffectComposer.js";
+        import { RenderPass } from "three/addons/postprocessing/RenderPass.js";
+        import { GPGPUEmitter } from '../js/vfx/GPGPUEmitter.js';
+        import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
+
+        // --- Loader Helpers ---
+        const gltfLoader = new GLTFLoader();
+        const textureLoader = new THREE.TextureLoader();
+
+        function handleFile(file, emitter) {
+            const url = URL.createObjectURL(file);
+            const ext = file.name.split('.').pop().toLowerCase();
+
+            if (['glb', 'gltf'].includes(ext)) {
+                loadModel(url, emitter);
+            } else if (['png', 'jpg', 'jpeg'].includes(ext)) {
+                loadImage(url, emitter);
+            } else {
+                alert('Unsupported file type. Please use .glb, .gltf, .png, or .jpg');
+            }
+        }
+
+        function loadModel(url, emitter) {
+            console.log("Loading Model:", url);
+            gltfLoader.load(url, (gltf) => {
+                // Find the first mesh
+                let targetMesh = null;
+                gltf.scene.traverse((child) => {
+                    if (!targetMesh && child.isMesh) {
+                        targetMesh = child;
+                    }
+                });
+
+                if (targetMesh) {
+                    emitter.sampleGeometry(targetMesh);
+                    console.log("Model Loaded & Sampled");
+                } else {
+                    alert("No mesh found in GLTF");
+                }
+            }, undefined, (err) => console.error(err));
+        }
+
+        function loadImage(url, emitter) {
+            console.log("Loading Image:", url);
+            textureLoader.load(url, (texture) => {
+                // Create a displaced plane based on image
+                const width = 20;
+                const height = 20 * (texture.image.height / texture.image.width);
+                
+                const geometry = new THREE.PlaneGeometry(width, height, 256, 256); // High Res for points
+                const material = new THREE.MeshBasicMaterial({ map: texture }); // Not used visually
+                
+                // Displacement Logic (CPU side for sampling)
+                // We need to read pixels to displace Z
+                // Create a canvas to read data
+                const canvas = document.createElement('canvas');
+                canvas.width = texture.image.width;
+                canvas.height = texture.image.height;
+                const ctx = canvas.getContext('2d');
+                ctx.drawImage(texture.image, 0, 0);
+                const data = ctx.getImageData(0, 0, canvas.width, canvas.height).data;
+                
+                const pos = geometry.attributes.position;
+                const uvs = geometry.attributes.uv;
+                
+                for (let i = 0; i < pos.count; i++) {
+                    const u = uvs.getX(i);
+                    const v = uvs.getY(i);
+                    
+                    // Sample image data
+                    const x = Math.floor(u * (canvas.width - 1));
+                    const y = Math.floor((1 - v) * (canvas.height - 1)); // Flip Y
+                    const index = (y * canvas.width + x) * 4;
+                    
+                    // Brightness = height
+                    const r = data[index];
+                    const g = data[index + 1];
+                    const b = data[index + 2];
+                    const brightness = (r + g + b) / 3 / 255;
+                    
+                    // Set Z
+                    pos.setZ(i, brightness * 5.0); // Depth scale
+                }
+                
+                geometry.computeVertexNormals();
+                const mesh = new THREE.Mesh(geometry, material);
+                
+                // Rotate to face camera
+                // mesh.rotation.x = -Math.PI / 4; 
+                
+                emitter.sampleGeometry(mesh);
+                console.log("Image Processed");
+            });
+        }
+
+        new UnifiedRenderer({
+            type: 'three',
+            
+            params: {
+                speed: 1.0,
+                explosion: 0.0,
+                noiseScale: 0.05,
+                noiseStrength: 5.0,
+                pointSize: 2.0,
+                bloomStrength: 1.5,
+                bloomRadius: 0.4,
+                color1: '#00ccff',
+                color2: '#ff0088'
+            },
+
+            init: (sketch) => {
+                const { scene, camera, renderer, params } = sketch;
+
+                camera.position.set(0, 0, 30);
+                camera.lookAt(0, 0, 0);
+
+                // --- 1. Initial Geometry (Torus) ---
+                const geometry = new THREE.TorusKnotGeometry(8, 2, 128, 32);
+                const mesh = new THREE.Mesh(geometry, new THREE.MeshBasicMaterial());
+                
+                // --- 2. Initialize GPGPU Emitter ---
+                const emitter = new GPGPUEmitter(renderer, {
+                    count: 131072, // 362x362 - Higher count for "Solid" look
+                    speed: params.speed
+                });
+                
+                emitter.params.noiseScale = params.noiseScale;
+                emitter.params.noiseStrength = params.noiseStrength;
+                emitter.params.pointSize = params.pointSize;
+                emitter.params.color1 = new THREE.Color(params.color1);
+                emitter.params.color2 = new THREE.Color(params.color2);
+                
+                emitter.sampleGeometry(mesh);
+                
+                scene.add(emitter.particles);
+                sketch.emitter = emitter;
+
+                // --- 3. Post-Processing ---
+                const composer = new EffectComposer(renderer);
+                composer.addPass(new RenderPass(scene, camera));
+                
+                const bloomPass = new UnrealBloomPass(new THREE.Vector2(window.innerWidth, window.innerHeight), 1.5, 0.4, 0.85);
+                bloomPass.strength = params.bloomStrength;
+                bloomPass.radius = params.bloomRadius;
+                composer.addPass(bloomPass);
+                
+                sketch.composer = composer;
+               
+                // --- 4. UI Setup ---
+                sketch.setUI([
+                    { name: 'Speed', value: params.speed, min: 0, max: 5, step: 0.1, bind: 'speed' },
+                    { name: 'Explosion', value: params.explosion, min: 0, max: 1, step: 0.01, bind: 'explosion' },
+                    { name: 'Noise Scale', value: params.noiseScale, min: 0.01, max: 0.5, step: 0.01, bind: 'noiseScale' },
+                    { name: 'Noise Str', value: params.noiseStrength, min: 0, max: 10, step: 0.1, bind: 'noiseStrength' },
+                    { name: 'Point Size', value: params.pointSize, min: 0.1, max: 10, step: 0.1, bind: 'pointSize' },
+                    { name: 'Color A', value: params.color1, type: 'color', bind: 'color1' },
+                    { name: 'Color B', value: params.color2, type: 'color', bind: 'color2' },
+                    { name: 'Bloom', value: params.bloomStrength, min: 0, max: 3, step: 0.1, bind: 'bloomStrength' }
+                ]);
+
+                // --- 5. Event Listeners ---
+                const fileInput = document.getElementById('file-input');
+                fileInput.addEventListener('change', (e) => {
+                    if (e.target.files.length > 0) {
+                        handleFile(e.target.files[0], emitter);
+                    }
+                });
+
+                const explodeBtn = document.getElementById('explode-btn');
+                let isExploded = false;
+                
+                // Simple Tween Logic
+                sketch.targetExplosion = 0.0;
+                
+                explodeBtn.addEventListener('click', () => {
+                    isExploded = !isExploded;
+                    sketch.targetExplosion = isExploded ? 1.0 : 0.0;
+                    // Update UI text
+                    explodeBtn.innerText = isExploded ? "🔄 Assemble" : "💥 Explode";
+                });
+            },
+
+            customRender: (sketch, time, delta) => {
+                const { scene, camera, renderer, emitter, composer, params } = sketch;
+                
+                if (emitter) {
+                    // Smooth Explosion Transition
+                    if (sketch.targetExplosion !== undefined) {
+                        // Lerp params.explosion towards target
+                        params.explosion += (sketch.targetExplosion - params.explosion) * delta * 2.0;
+                        // Clamp
+                        if (Math.abs(params.explosion - sketch.targetExplosion) < 0.01) params.explosion = sketch.targetExplosion;
+                    }
+
+                    // Sync params
+                    emitter.params.speed = params.speed;
+                    emitter.params.explosion = params.explosion;
+                    emitter.params.noiseScale = params.noiseScale;
+                    emitter.params.noiseStrength = params.noiseStrength;
+                    emitter.params.pointSize = params.pointSize;
+                    
+                    if (typeof params.color1 === 'string') emitter.params.color1.set(params.color1);
+                    if (typeof params.color2 === 'string') emitter.params.color2.set(params.color2);
+                    
+                    // Update Simulation
+                    emitter.update(time, delta);
+                }
+                
+                // Rotate camera slowly
+                camera.position.x = Math.sin(time * 0.2) * 30;
+                camera.position.z = Math.cos(time * 0.2) * 30;
+                camera.lookAt(0, 0, 0);
+
+                if (composer) {
+                    composer.render();
+                } else {
+                    renderer.render(scene, camera);
+                }
+            },
+            
+            onParamChange: (key, value, sketch) => {
+                if (key === 'bloomStrength' && sketch.composer) {
+                    sketch.composer.passes[1].strength = value;
+                }
+            }
+        });
+    </script>
+</body>
+</html>

@@ -1,0 +1,141 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Demo 18 - Star Nest (Kali Port)</title>
+    <style>
+        body { margin: 0; overflow: hidden; background: #000; }
+        #container { width: 100vw; height: 100vh; }
+    </style>
+    <!-- Import Map for Three.js -->
+    <script type="importmap">
+        {
+            "imports": {
+                "three": "../js/libs/three/three.module.js",
+                "three/addons/": "../js/libs/three/addons/"
+            }
+        }
+    </script>
+</head>
+<body>
+    <div id="container"></div>
+
+    <script type="module">
+        import { UnifiedRenderer } from '../js/UnifiedRenderer.js';
+        import * as THREE from 'three';
+
+        // --- Star Nest GLSL Shader (Ported from Kali) ---
+        const fragmentShader = `
+            uniform float uTime;
+            uniform vec2 uResolution;
+            uniform vec2 uMouse;
+
+            // UI Parameters
+            uniform float uSpeed;
+            uniform float uIterations;
+            uniform float uFormuparam;
+            uniform float uStepSize;
+            uniform float uZoom;
+            uniform float uTile;
+            uniform float uBrightness;
+            uniform float uDarkmatter;
+            uniform float uDistfading;
+            uniform float uSaturation;
+
+            // Constants
+            #define iterations 17
+            #define formuparam 0.53
+            #define volsteps 20
+            #define stepsize 0.1
+            #define zoom   0.800
+            #define tile   0.850
+            #define speed  0.010 
+            #define brightness 0.0015
+            #define darkmatter 0.300
+            #define distfading 0.730
+            #define saturation 0.850
+
+            void main() {
+                vec2 uv = gl_FragCoord.xy / uResolution.xy - 0.5;
+                uv.y *= uResolution.y / uResolution.x;
+                
+                vec3 dir = vec3(uv * uZoom, 1.0);
+                float time = uTime * uSpeed + 0.25;
+
+                // Mouse rotation
+                float a1 = 0.5 + uMouse.x / uResolution.x * 2.0;
+                float a2 = 0.8 + uMouse.y / uResolution.y * 2.0;
+                mat2 rot1 = mat2(cos(a1), sin(a1), -sin(a1), cos(a1));
+                mat2 rot2 = mat2(cos(a2), sin(a2), -sin(a2), cos(a2));
+                dir.xz *= rot1;
+                dir.xy *= rot2;
+                
+                vec3 from = vec3(1.0, 0.5, 0.5);
+                from += vec3(time * 2.0, time, -2.0);
+                from.xz *= rot1;
+                from.xy *= rot2;
+                
+                // Use uniforms for tweakable params
+                float s = 0.1;
+                float fade = 1.0;
+                vec3 v = vec3(0.0);
+                
+                for (int r = 0; r < volsteps; r++) {
+                    vec3 p = from + s * dir * 0.5;
+                    p = abs(vec3(uTile) - mod(p, vec3(uTile * 2.0)));
+                    float pa, a = pa = 0.0;
+                    
+                    for (int i = 0; i < iterations; i++) { 
+                        p = abs(p) / dot(p, p) - uFormuparam; 
+                        a += abs(length(p) - pa); 
+                        pa = length(p);
+                    }
+                    
+                    float dm = max(0.0, darkmatter - a * a * 0.001); 
+                    a *= a * a; 
+                    if (r > 6) fade *= 1.0 - dm; 
+                    
+                    v += fade;
+                    v += vec3(s, s * s, s * s * s * s) * a * brightness * fade; 
+                    fade *= distfading; 
+                    s += stepsize;
+                }
+                
+                v = mix(vec3(length(v)), v, saturation); 
+                gl_FragColor = vec4(v * 0.01, 1.0);
+            }
+        `;
+
+        // --- Init Renderer ---
+        const renderer = new UnifiedRenderer({
+            container: document.getElementById('container'),
+            type: 'shader',
+            mouseDragOnly: true, // Only update mouse on drag
+            fragmentShader: fragmentShader,
+            params: {
+                uSpeed: 0.01,
+                uIterations: 17,
+                uFormuparam: 0.53,
+                uStepSize: 0.1,
+                uZoom: 0.8,
+                uTile: 0.85,
+                uBrightness: 0.0015,
+                uDarkmatter: 0.300,
+                uDistfading: 0.730,
+                uSaturation: 0.850
+            },
+            init: (app) => {
+                console.log('Star Nest Demo Initialized');
+                app.setUI([
+                    { name: 'Speed', value: 0.01, min: 0.0, max: 0.1, step: 0.001, bind: 'uSpeed' },
+                    { name: 'Form Param', value: 0.53, min: 0.1, max: 1.0, step: 0.01, bind: 'uFormuparam' },
+                    { name: 'Step Size', value: 0.1, min: 0.05, max: 0.5, step: 0.01, bind: 'uStepSize' },
+                    { name: 'Zoom', value: 0.8, min: 0.1, max: 2.0, step: 0.1, bind: 'uZoom' },
+                    { name: 'Saturation', value: 0.85, min: 0.0, max: 2.0, step: 0.1, bind: 'uSaturation' }
+                ]);
+            }
+        });
+    </script>
+</body>
+</html>

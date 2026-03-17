@@ -1,0 +1,905 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Demo 9 - AI Depth Parallax</title>
+    <style>
+        body { margin: 0; overflow: hidden; background-color: #000; }
+        #canvas-container { position: absolute; top: 0; left: 0; width: 100%; height: 100%; z-index: 1; }
+        #overlay-container { position: absolute; top: 0; left: 0; width: 100%; height: 100%; pointer-events: none; z-index: 2; }
+        
+        .loading-overlay {
+            position: absolute; top: 0; left: 0; width: 100%; height: 100%;
+            background: rgba(0,0,0,0.8);
+            display: flex; flex-direction: column;
+            justify-content: center; align-items: center;
+            color: white; font-family: monospace; z-index: 10;
+            transition: opacity 0.5s;
+        }
+        .loading-text { font-size: 16px; margin-bottom: 10px; color: #00ff88; }
+        .loading-bar { width: 200px; height: 4px; background: #333; border-radius: 2px; overflow: hidden; }
+        .loading-progress { width: 0%; height: 100%; background: #00ff88; transition: width 0.2s; }
+    </style>
+    
+    <script type="importmap">
+        {
+            "imports": {
+                "three": "https://unpkg.com/three@0.160.0/build/three.module.js",
+                "three/addons/": "https://unpkg.com/three@0.160.0/examples/jsm/",
+                "@xenova/transformers": "https://cdn.jsdelivr.net/npm/@xenova/transformers@2.17.2/dist/transformers.min.js"
+            }
+        }
+    </script>
+</head>
+<body>
+    <div id="canvas-container"></div>
+    <canvas id="overlay-container"></canvas>
+    
+    <div id="loading" class="loading-overlay">
+        <div class="loading-text" id="status-text">INITIALIZING AI ENGINE...</div>
+        <div class="loading-bar"><div class="loading-progress" id="progress-bar"></div></div>
+        <div style="margin-top:10px; font-size: 10px; color: #666;">Downloading Depth Anything Model (~30MB)...</div>
+    </div>
+
+    <script type="module">
+        import * as THREE from 'three';
+        import { pipeline, env } from '@xenova/transformers';
+
+        // --- Config ---
+        // Disable local model check since we are in browser
+        env.allowLocalModels = false;
+        env.useBrowserCache = true;
+
+        const CONFIG = {
+            intensity: 0.15, // Reduced default intensity
+            focus: 0.5,      // Depth level that stays stationary
+            zoom: 1.05,       // Slight zoom to cover edges
+            showTracking: true, // Tracking HUD
+            trackingStyle: 'Tech', // Default Style
+            boxStyle: 'Bracket', // Box Style: 'Full', 'Bracket', 'Corner'
+            lineStyle: 'Curve', // Line Style: 'None', 'Line', 'Curve'
+            lineDash: 'Solid' // Line Type: 'Solid', 'Dashed'
+        };
+
+        // --- Overlay Setup ---
+        const overlayCanvas = document.getElementById('overlay-container');
+        const ctx = overlayCanvas.getContext('2d');
+        let detectedFeatures = []; // {x, y, depth, label}
+        let depthDataRaw = null; // Float32Array or similar
+        let depthWidth = 1;
+        let depthHeight = 1;
+
+        // Resize Overlay
+        function resizeOverlay() {
+            overlayCanvas.width = window.innerWidth;
+            overlayCanvas.height = window.innerHeight;
+        }
+        window.addEventListener('resize', resizeOverlay);
+        resizeOverlay();
+        const container = document.getElementById('canvas-container');
+        const scene = new THREE.Scene();
+        const camera = new THREE.OrthographicCamera(-1, 1, 1, -1, 0, 1); // Fullscreen Quad
+        
+        const renderer = new THREE.WebGLRenderer({ antialias: true });
+        renderer.setSize(window.innerWidth, window.innerHeight);
+        container.appendChild(renderer.domElement);
+
+        // --- Shader Material ---
+        // We use a displacement logic:
+        // Pixel P at (u,v) moves to P' based on its Depth D.
+        // P' = P + MouseOffset * (D - Focus)
+        // But in Fragment Shader we are rendering pixel P', so we need to inverse map?
+        // Simple Parallax: To render UV, we look at where this pixel *came from*.
+        // uv_sample = uv - MouseOffset * (Depth(uv) - Focus)
+        // This is an approximation (relief mapping) but works for small displacements.
+        
+        const fragmentShader = `
+            uniform sampler2D uTexture;
+            uniform sampler2D uDepthMap;
+            uniform vec2 uMouse;
+            uniform float uIntensity;
+            uniform float uFocus;
+            uniform float uZoom;
+            uniform vec2 uResolution;
+            uniform vec2 uImgResolution;
+
+            varying vec2 vUv;
+
+            // Bicubic Sampling for Smoother Textures
+            vec4 texture2DBicubic(sampler2D sampler, vec2 texCoords, vec2 texSize) {
+                vec2 invTexSize = 1.0 / texSize;
+                texCoords = texCoords * texSize - 0.5;
+
+                vec2 fxy = fract(texCoords);
+                texCoords -= fxy;
+
+                vec4 xcubic = vec4(
+                    1.0 - 2.0 * fxy.x + fxy.x * fxy.x,
+                    1.0 + 2.0 * fxy.x - 2.0 * fxy.x * fxy.x,
+                    1.0 - fxy.x * fxy.x,
+                    fxy.x * fxy.x
+                );
+                vec4 ycubic = vec4(
+                    1.0 - 2.0 * fxy.y + fxy.y * fxy.y,
+                    1.0 + 2.0 * fxy.y - 2.0 * fxy.y * fxy.y,
+                    1.0 - fxy.y * fxy.y,
+                    fxy.y * fxy.y
+                );
+
+                vec4 c = texCoords.xxyy + vec2(-0.5, +1.5).xyxy;
+                vec4 s = vec4(xcubic.xz + xcubic.yw, ycubic.xz + ycubic.yw);
+                vec4 offset = c + vec4(xcubic.yw, ycubic.yw) / s;
+
+                vec4 sample0 = texture2D(sampler, offset.xz * invTexSize);
+                vec4 sample1 = texture2D(sampler, offset.yz * invTexSize);
+                vec4 sample2 = texture2D(sampler, offset.xw * invTexSize);
+                vec4 sample3 = texture2D(sampler, offset.yw * invTexSize);
+
+                float sx = s.x / (s.x + s.y);
+                float sy = s.z / (s.z + s.w);
+
+                return mix(
+                    mix(sample3, sample2, sx),
+                    mix(sample1, sample0, sx),
+                    sy
+                );
+            }
+
+            void main() {
+                // Aspect Ratio Correction (Contain Mode)
+                float screenAspect = uResolution.x / uResolution.y;
+                float imgAspect = (uImgResolution.y > 0.0) ? (uImgResolution.x / uImgResolution.y) : 1.0;
+                
+                vec2 scale = vec2(1.0);
+                if (screenAspect > imgAspect) {
+                    scale.x = imgAspect / screenAspect;
+                } else {
+                    scale.y = screenAspect / imgAspect;
+                }
+                
+                vec2 uv = (vUv - 0.5) / scale + 0.5;
+                
+                // Black Bars
+                if (uv.x < 0.0 || uv.x > 1.0 || uv.y < 0.0 || uv.y > 1.0) {
+                   gl_FragColor = vec4(0.0, 0.0, 0.0, 1.0);
+                   return;
+                }
+
+                // Zoom
+                vec2 center = vec2(0.5);
+                uv = (uv - center) / uZoom + center;
+
+                // --- 2.5D Relief Mapping with Edge Preservation ---
+                
+                // Iterative Parallax with Depth-based Edge Clamping
+                float d1 = texture2DBicubic(uDepthMap, uv, uImgResolution).r;
+                
+                float depthDelta = d1 - uFocus;
+                
+                // Enhanced Perspective with Soft Clamping
+                vec2 offset = depthDelta * uIntensity * uMouse;
+                
+                // Sample Candidate
+                vec2 uvCandidate = uv + offset;
+                
+                // Check depth at candidate position
+                float d2 = texture2DBicubic(uDepthMap, uvCandidate, uImgResolution).r;
+                
+                // Edge Protection Logic:
+                // Calculate how much the depth changes from source to target.
+                // d1 (Source Depth) - d2 (Target Depth)
+                // If Positive: We are mapping a Background pixel (d2 low) onto a Foreground pixel (d1 high).
+                // This creates "tearing" or "stretching" of the background onto the object.
+                // If Negative: We are mapping a Foreground pixel onto Background. This is Occlusion (fine).
+                
+                float diff = d1 - d2;
+                
+                // Soft Clamping:
+                // If difference is small (<0.05), do nothing.
+                // If difference is large (>0.2), significantly reduce offset to prevent artifacts.
+                float edgeFactor = smoothstep(0.05, 0.2, diff);
+                
+                // Dampen offset at edges. 
+                // If edgeFactor is 1.0 (bad edge), we reduce offset by 60-80%.
+                offset *= (1.0 - edgeFactor * 0.7); 
+                
+                vec2 uvFinal = uv + offset;
+
+                // Use Bicubic for Color
+                vec4 color = texture2DBicubic(uTexture, uvFinal, uImgResolution);
+                
+                // Depth of Field (Blur based on distance from focus plane)
+                // Blur more on background to hide stretching
+                float blurFactor = abs(d1 - uFocus); 
+                
+                // Increase blur strength slightly for smoother look
+                if (blurFactor > 0.1) {
+                    float blurSize = (blurFactor - 0.1) * 0.008; 
+                    
+                    // 8-tap Gaussian-ish blur for better quality
+                    vec4 sum = color * 0.2;
+                    sum += texture2D(uTexture, uvFinal + vec2(blurSize, 0.0)) * 0.2;
+                    sum += texture2D(uTexture, uvFinal - vec2(blurSize, 0.0)) * 0.2;
+                    sum += texture2D(uTexture, uvFinal + vec2(0.0, blurSize)) * 0.2;
+                    sum += texture2D(uTexture, uvFinal - vec2(0.0, blurSize)) * 0.2;
+                    // Diagonals
+                    sum += texture2D(uTexture, uvFinal + vec2(blurSize, blurSize)) * 0.1; // Weight correction
+                    sum += texture2D(uTexture, uvFinal - vec2(blurSize, blurSize)) * 0.1; // Normalize? 
+                    // 0.2*5 + 0.1*2 = 1.2 -> Divide by 1.2
+                    color = sum / 1.2;
+                }
+                
+                // Vignette
+                float edgeX = smoothstep(0.0, 0.05, uvFinal.x) * smoothstep(1.0, 0.95, uvFinal.x);
+                float edgeY = smoothstep(0.0, 0.05, uvFinal.y) * smoothstep(1.0, 0.95, uvFinal.y);
+                float vignette = edgeX * edgeY;
+                
+                gl_FragColor = color * vignette;
+            }
+        `;
+
+        const vertexShader = `
+            varying vec2 vUv;
+            void main() {
+                vUv = uv;
+                gl_Position = vec4(position, 1.0);
+            }
+        `;
+
+        const uniforms = {
+            uTexture: { value: null },
+            uDepthMap: { value: null }, // Placeholder
+            uMouse: { value: new THREE.Vector2(0, 0) },
+            uIntensity: { value: CONFIG.intensity },
+            uFocus: { value: CONFIG.focus },
+            uZoom: { value: CONFIG.zoom },
+            uResolution: { value: new THREE.Vector2(window.innerWidth, window.innerHeight) },
+            uImgResolution: { value: new THREE.Vector2(1, 1) }
+        };
+
+        const material = new THREE.ShaderMaterial({
+            vertexShader,
+            fragmentShader,
+            uniforms
+        });
+
+        const geometry = new THREE.PlaneGeometry(2, 2);
+        const plane = new THREE.Mesh(geometry, material);
+        scene.add(plane);
+
+        // --- AI & Logic ---
+        const statusText = document.getElementById('status-text');
+        const progressBar = document.getElementById('progress-bar');
+        const loadingOverlay = document.getElementById('loading');
+
+        let depthEstimator = null;
+        let objectDetector = null; // Transformers.js YOLOS
+        let currentImageURL = '../sample/Sample2.jpg'; // Default starting image
+
+        // Initialize Pipeline
+        async function initAI() {
+            try {
+                // 1. Load Object Detection Model (YOLOS-Tiny)
+                statusText.innerText = "LOADING OBJECT DETECTOR (YOLOS-Tiny)...";
+                // Using Transformers.js for detection (lighter and smarter than COCO-SSD)
+                objectDetector = await pipeline('object-detection', 'Xenova/yolos-tiny', {
+                    quantized: true
+                });
+
+                // 2. Load Depth Model (Transformers.js)
+                statusText.innerText = "LOADING DEPTH MODEL (Depth Anything)...";
+                depthEstimator = await pipeline('depth-estimation', 'Xenova/depth-anything-small-hf', {
+                    quantized: true,
+                    progress_callback: (data) => {
+                        if (data.status === 'progress') {
+                            const percent = Math.round(data.progress || 0);
+                            progressBar.style.width = percent + '%';
+                        }
+                    }
+                });
+                
+                statusText.innerText = "MODEL READY. PROCESSING IMAGE...";
+                await processImage(currentImageURL);
+                
+            } catch (e) {
+                console.error(e);
+                statusText.innerText = "ERROR LOADING AI: " + e.message;
+                statusText.style.color = "#ff4444";
+            }
+        }
+
+        async function processImage(url) {
+            loadingOverlay.style.opacity = '1';
+            loadingOverlay.style.pointerEvents = 'auto';
+            statusText.innerText = "COMPUTING DEPTH MAP...";
+            
+            // 1. Load Image Texture
+            const texLoader = new THREE.TextureLoader();
+            texLoader.load(url, async (texture) => {
+                texture.minFilter = THREE.LinearFilter;
+                texture.magFilter = THREE.LinearFilter;
+                uniforms.uTexture.value = texture;
+                
+                // 2. Run AI Inference
+                // Transformers.js takes image URL or Element
+                const output = await depthEstimator(url);
+                
+                const depthCanvas = output.depth.toCanvas();
+                
+                const depthTexture = new THREE.CanvasTexture(depthCanvas);
+                depthTexture.minFilter = THREE.LinearFilter;
+                depthTexture.magFilter = THREE.LinearFilter;
+                
+                uniforms.uDepthMap.value = depthTexture;
+                uniforms.uImgResolution.value.set(texture.image.width, texture.image.height);
+                
+                // Store Depth Data for HUD
+                depthDataRaw = output.depth.data;
+                depthWidth = output.depth.width;
+                depthHeight = output.depth.height;
+                
+                // 3. Run Object Detection (YOLOS)
+                statusText.innerText = "DETECTING OBJECTS...";
+                await detectObjects(texture.image);
+                
+                // Done
+                loadingOverlay.style.opacity = '0';
+                loadingOverlay.style.pointerEvents = 'none';
+            });
+        }
+
+        // --- Feature Detection (YOLOS + Gradient Scanning) ---
+        async function detectObjects(image) {
+            detectedFeatures = [];
+            let aiObjectCount = 0;
+            
+            // 1. Run YOLOS (Semantic Objects)
+            if (objectDetector) {
+                try {
+                    // YOLOS Inference
+                    const results = await objectDetector(image, { threshold: 0.3 }); // Lower threshold for more detections
+                    
+                    const w = image.width;
+                    const h = image.height;
+
+                    results.forEach((res) => {
+                        aiObjectCount++;
+                        const box = res.box;
+                        // Transformers.js returns absolute coordinates {xmin, ymin, xmax, ymax}
+                        const nx = (box.xmin + box.xmax) / 2 / w;
+                        const ny = (box.ymin + box.ymax) / 2 / h;
+                        const nw = (box.xmax - box.xmin) / w;
+                        const nh = (box.ymax - box.ymin) / h;
+                        
+                        let depthVal = 0.5;
+                        if (depthDataRaw) {
+                            const dx = Math.floor(nx * depthWidth);
+                            const dy = Math.floor(ny * depthHeight);
+                            const di = (dy * depthWidth + dx);
+                            if (depthDataRaw[di] !== undefined) {
+                                depthVal = depthDataRaw[di];
+                                if (depthVal > 1.0) depthVal /= 255.0;
+                            }
+                        }
+
+                        detectedFeatures.push({
+                            x: nx,
+                            y: ny,
+                            depth: depthVal,
+                            label: res.label.toUpperCase() + ` ${(res.score*100).toFixed(0)}%`,
+                            w: nw,
+                            h: nh,
+                            type: 'AI' // Mark as AI detection
+                        });
+                    });
+                } catch (err) {
+                    console.error("Detection Error:", err);
+                }
+            }
+
+            // 2. Adaptive Feature Scanning
+            // If we found few objects, increase the sensitivity of the scanner
+            const densityMultiplier = aiObjectCount < 3 ? 1.5 : 1.0;
+            
+            detectFeaturesManual(image, densityMultiplier);
+        }
+
+        // --- Fallback/Augmentation: Gradient-based Edge Detection ---
+        function detectFeaturesManual(image, densityMultiplier = 1.0) {
+             // Draw image to temp canvas to read pixels
+             const cvs = document.createElement('canvas');
+             // Use smaller size for speed, but enough for edge detection
+             cvs.width = 320; 
+             cvs.height = 320 * (image.height / image.width);
+             const c = cvs.getContext('2d');
+             c.drawImage(image, 0, 0, cvs.width, cvs.height);
+             const imgData = c.getImageData(0, 0, cvs.width, cvs.height);
+             const data = imgData.data;
+             const w = cvs.width;
+             const h = cvs.height;
+
+             // Grid Scan
+             const gridSize = 32; // Dense grid
+             let objectCount = 0;
+             
+             // Simple Sobel-ish Kernel (Central Difference)
+             // | -1 0 +1 |
+             const getLum = (x, y) => {
+                 if (x < 0 || x >= w || y < 0 || y >= h) return 0;
+                 const i = (y * w + x) * 4;
+                 return (data[i] * 0.299 + data[i+1] * 0.587 + data[i+2] * 0.114);
+             };
+
+             for(let y = gridSize/2; y < h - gridSize/2; y += gridSize) {
+                 for(let x = gridSize/2; x < w - gridSize/2; x += gridSize) {
+                     
+                     // Find strongest edge in this cell
+                     let maxGrad = 0;
+                     let maxX = 0;
+                     let maxY = 0;
+
+                     // Sub-sample the grid
+                     for(let gy = -gridSize/2; gy < gridSize/2; gy+=4) {
+                         for(let gx = -gridSize/2; gx < gridSize/2; gx+=4) {
+                             const px = Math.floor(x + gx);
+                             const py = Math.floor(y + gy);
+                             
+                             // Calculate Gradient Magnitude
+                             // Gx = Right - Left
+                             // Gy = Down - Up
+                             const lumL = getLum(px-1, py);
+                             const lumR = getLum(px+1, py);
+                             const lumU = getLum(px, py-1);
+                             const lumD = getLum(px, py+1);
+                             
+                             const gxVal = lumR - lumL;
+                             const gyVal = lumD - lumU;
+                             const grad = Math.sqrt(gxVal*gxVal + gyVal*gyVal);
+                             
+                             if (grad > maxGrad) {
+                                 maxGrad = grad;
+                                 maxX = px;
+                                 maxY = py;
+                             }
+                         }
+                     }
+
+                     // Threshold - Adaptive
+                     // Typical edge gradient is 20-100.
+                     const threshold = 40 / densityMultiplier; 
+                     
+                     if (maxGrad > threshold && Math.random() > 0.1) { 
+                         objectCount++;
+                         const nx = maxX / w;
+                         const ny = maxY / h;
+                         
+                         let depthVal = 0.5;
+                         if (depthDataRaw) {
+                             const dx = Math.floor(nx * depthWidth);
+                             const dy = Math.floor(ny * depthHeight);
+                             const di = (dy * depthWidth + dx);
+                             if (depthDataRaw[di] !== undefined) {
+                                 depthVal = depthDataRaw[di];
+                                 if (depthVal > 1.0) depthVal /= 255.0;
+                             }
+                         }
+
+                         detectedFeatures.push({
+                             x: nx,
+                             y: ny,
+                             depth: depthVal,
+                             label: `SCAN ${objectCount.toString().padStart(2, '0')}`,
+                             w: 0.02 + Math.random() * 0.03,
+                             h: 0.02 + Math.random() * 0.03,
+                             type: 'SCAN'
+                         });
+                     }
+                 }
+             }
+        }
+
+        // --- HUD Rendering ---
+        function renderHUD() {
+            ctx.clearRect(0, 0, overlayCanvas.width, overlayCanvas.height);
+            if (!CONFIG.showTracking) return;
+
+            const width = overlayCanvas.width;
+            const height = overlayCanvas.height;
+            
+            // Re-calculate Contain Scale to match Shader Logic
+            const imgRes = uniforms.uImgResolution.value;
+            const screenAspect = width / height;
+            const imgAspect = (imgRes.y > 0) ? (imgRes.x / imgRes.y) : 1.0;
+            
+            let scaleX = 1.0, scaleY = 1.0;
+            let dispW, dispH, offX, offY;
+
+            if (screenAspect > imgAspect) {
+                dispH = height;
+                dispW = height * imgAspect;
+                offX = (width - dispW) / 2;
+                offY = 0;
+            } else {
+                dispW = width;
+                dispH = width / imgAspect;
+                offX = 0;
+                offY = (height - dispH) / 2;
+            }
+            
+            drawFeatures(dispW, dispH, offX, offY);
+        }
+
+        function drawFeatures(dispW, dispH, offX, offY) {
+            const style = CONFIG.trackingStyle;
+            
+            // Common Styles
+            ctx.lineWidth = 1;
+            ctx.font = '10px monospace';
+
+            if (style === 'Tech') {
+                ctx.strokeStyle = 'rgba(255, 255, 255, 0.8)';
+                ctx.fillStyle = 'rgba(255, 255, 255, 0.8)';
+            } else if (style === 'Minimal') {
+                ctx.strokeStyle = 'rgba(255, 255, 255, 0.4)';
+                ctx.fillStyle = 'rgba(255, 255, 255, 0.0)'; // No text
+            } else if (style === 'Crosshair') {
+                ctx.strokeStyle = '#00CAE0'; // Cyan
+                ctx.fillStyle = '#00CAE0';
+            }
+
+            // Draw Connections (Constellation)
+            if (CONFIG.lineStyle !== 'None' && style === 'Tech') {
+                ctx.save();
+                ctx.beginPath();
+                if (CONFIG.lineDash === 'Dashed') {
+                    ctx.setLineDash([4, 4]);
+                    ctx.strokeStyle = 'rgba(255, 255, 255, 0.3)';
+                } else {
+                    ctx.setLineDash([]);
+                    ctx.strokeStyle = 'rgba(255, 255, 255, 0.5)';
+                }
+
+                detectedFeatures.forEach((f, i) => {
+                    if (i < detectedFeatures.length - 1) {
+                        // Only connect nearby features to avoid mess
+                        // Or connect sequentially for 'scan path' look
+                        const next = detectedFeatures[i+1];
+                        const p1 = getParallaxPos(f, dispW, dispH, offX, offY);
+                        const p2 = getParallaxPos(next, dispW, dispH, offX, offY);
+                        
+                        const dist = Math.hypot(p1.x - p2.x, p1.y - p2.y);
+                        if (dist < 200) {
+                            ctx.moveTo(p1.x, p1.y);
+                            if (CONFIG.lineStyle === 'Curve') {
+                                // Quadratic Curve
+                                const cpX = (p1.x + p2.x) / 2;
+                                const cpY = p1.y; // Control point logic
+                                ctx.quadraticCurveTo(cpX, cpY, p2.x, p2.y);
+                            } else {
+                                // Line
+                                ctx.lineTo(p2.x, p2.y);
+                            }
+                        }
+                    }
+                });
+                ctx.stroke();
+                ctx.restore();
+            }
+
+            // Draw Features
+            detectedFeatures.forEach(f => {
+                const pos = getParallaxPos(f, dispW, dispH, offX, offY);
+                const boxW = f.w * dispW;
+                const boxH = f.h * dispH;
+                const isAI = f.type === 'AI';
+
+                if (style === 'Tech') {
+                    ctx.save();
+                    
+                    // Box Style Logic
+                    if (!isAI) {
+                        // SCAN Box
+                        ctx.setLineDash([2, 4]);
+                        ctx.strokeStyle = 'rgba(255, 255, 255, 0.3)';
+                        ctx.strokeRect(pos.x - boxW/2, pos.y - boxH/2, boxW, boxH);
+                    } else {
+                        // AI Box
+                        ctx.setLineDash([]);
+                        ctx.strokeStyle = 'rgba(255, 255, 255, 0.9)';
+                        
+                        const x = pos.x - boxW/2;
+                        const y = pos.y - boxH/2;
+                        const w = boxW;
+                        const h = boxH;
+                        
+                        if (CONFIG.boxStyle === 'Full') {
+                            ctx.strokeRect(x, y, w, h);
+                        } else if (CONFIG.boxStyle === 'Bracket') {
+                            const cl = Math.min(w, h) * 0.3; // Corner Length
+                            ctx.beginPath();
+                            // [ Left Bracket
+                            ctx.moveTo(x + cl, y); ctx.lineTo(x, y); ctx.lineTo(x, y + h); ctx.lineTo(x + cl, y + h);
+                            // ] Right Bracket
+                            ctx.moveTo(x + w - cl, y); ctx.lineTo(x + w, y); ctx.lineTo(x + w, y + h); ctx.lineTo(x + w - cl, y + h);
+                            ctx.stroke();
+                        } else if (CONFIG.boxStyle === 'Corner') {
+                            const cl = 10;
+                            ctx.beginPath();
+                            // TL
+                            ctx.moveTo(x, y + cl); ctx.lineTo(x, y); ctx.lineTo(x + cl, y);
+                            // TR
+                            ctx.moveTo(x + w - cl, y); ctx.lineTo(x + w, y); ctx.lineTo(x + w, y + cl);
+                            // BL
+                            ctx.moveTo(x, y + h - cl); ctx.lineTo(x, y + h); ctx.lineTo(x + cl, y + h);
+                            // BR
+                            ctx.moveTo(x + w - cl, y + h); ctx.lineTo(x + w, y + h); ctx.lineTo(x + w, y + h - cl);
+                            ctx.stroke();
+                        }
+                    }
+                    
+                    // Label
+                    ctx.fillStyle = isAI ? 'rgba(255, 255, 255, 0.9)' : 'rgba(255, 255, 255, 0.5)';
+                    ctx.font = isAI ? 'bold 10px monospace' : '9px monospace';
+                    if (isAI || CONFIG.boxStyle !== 'Bracket') {
+                        ctx.fillText(f.label, pos.x - boxW/2, pos.y - boxH/2 - 5);
+                    }
+                    
+                    // Center Dot
+                    if (isAI) ctx.fillRect(pos.x - 1, pos.y - 1, 2, 2);
+                    
+                    ctx.restore();
+                } 
+                else if (style === 'Minimal') {
+                    // Minimal is just tiny corners or dots
+                    const s = 5;
+                    const x = pos.x - boxW/2;
+                    const y = pos.y - boxH/2;
+                    const w = boxW;
+                    const h = boxH;
+                    
+                    ctx.strokeStyle = 'rgba(255, 255, 255, 0.5)';
+                    ctx.beginPath();
+                    ctx.moveTo(x, y + s); ctx.lineTo(x, y); ctx.lineTo(x + s, y);
+                    ctx.moveTo(x + w - s, y + h); ctx.lineTo(x + w, y + h); ctx.lineTo(x + w, y + h - s);
+                    ctx.stroke();
+                }
+                else if (style === 'Crosshair') {
+                    // Crosshair (+)
+                    const s = 10;
+                    ctx.beginPath();
+                    ctx.moveTo(pos.x - s, pos.y); ctx.lineTo(pos.x + s, pos.y);
+                    ctx.moveTo(pos.x, pos.y - s); ctx.lineTo(pos.x, pos.y + s);
+                    ctx.stroke();
+                    
+                    // Circle
+                    ctx.beginPath();
+                    ctx.arc(pos.x, pos.y, 8, 0, Math.PI * 2);
+                    ctx.stroke();
+                }
+            });
+        }
+
+        function getParallaxPos(feature, dispW, dispH, offX, offY) {
+            // Original Screen Pos (Center relative)
+            // UV (0..1) -> Screen
+            // feature.x is 0..1 in Image Space
+            
+            // 1. Apply Zoom (Inverse of Shader?)
+            // Shader: uv = (uv - 0.5) / zoom + 0.5
+            // So if we want the point on screen corresponding to image UV:
+            // The image is zoomed IN. So the point moves OUT.
+            // ScreenUV = (ImageUV - 0.5) * zoom + 0.5
+            
+            let u = (feature.x - 0.5) * CONFIG.zoom + 0.5;
+            let v = (1.0 - feature.y - 0.5) * CONFIG.zoom + 0.5; // Flip Y for Canvas?
+            // Wait, feature.y is 0 (top) to 1 (bottom) in standard image.
+            // Canvas Y is 0 (top).
+            // Shader V is 0 (bottom) usually? 
+            // Three.js Texture: (0,0) is Bottom-Left. 
+            // Canvas Image Data: (0,0) is Top-Left.
+            // So feature.y 0 is Top.
+            // In Shader vUv 0 is Bottom? Usually.
+            // Let's assume feature.y needs 1.0 - y to match shader V?
+            // Let's stick to Top-Left logic for Canvas.
+            
+            // 2. Apply Parallax Offset
+            // Shader: finalUv = uv + offset
+            // We want to find Screen Pos that maps to this Image UV.
+            // This is reverse mapping.
+            // Simple approach: Apply the SAME offset to the screen point?
+            // Shader: Pixel at Screen UV samples Texture at (ScreenUV + Offset).
+            // So Texture Pixel at T is seen at Screen S where S + Offset = T.
+            // S = T - Offset.
+            // Offset depends on depth.
+            // Offset = (depth - focus) * intensity * mouse.
+            // So S = T - (depth - focus) * intensity * mouse.
+            
+            const mouseX = uniforms.uMouse.value.x; // -1..1
+            const mouseY = uniforms.uMouse.value.y; // -1..1 (Inverted in shader?)
+            // Shader uMouse is directly from event listener logic.
+            
+            // In Shader: vec2 parallaxOffset = (depth - uFocus) * uIntensity * uMouse;
+            // Note: Depth map is sampled at 'uv' (the screen coord). 
+            // But here we know the depth of the OBJECT (feature.depth).
+            // So we use object depth.
+            
+            const offX_val = (feature.depth - CONFIG.focus) * CONFIG.intensity * mouseX;
+            const offY_val = (feature.depth - CONFIG.focus) * CONFIG.intensity * mouseY;
+            
+            // Apply Shift (Inverse of shader read)
+            // If shader reads from Right, pixel appears moved to Left.
+            // If offset is (+), it reads Right. Image shifts Left.
+            // So ScreenPos = Original - Offset.
+            
+            u -= offX_val;
+            // v is Y. In Canvas Y is Down.
+            // MouseY in shader: Up is (+)? 
+            // Let's check mouse listener: y = -(clientY...) -> Up is +1.
+            // Canvas Y is Down.
+            // If MouseY is +1 (Up), offset Y is (+).
+            // Shader reads (+Y) -> Up. Image shifts Down.
+            // Canvas Y should increase.
+            // So v += offY_val?
+            // Let's try (-) first to match X logic, assuming consistent space.
+            // Actually, X is Right(+). MouseX Right(+). Offset(+). Read Right. Shift Left.
+            // Canvas X should decrease. u -= offX is correct.
+            // Y is Up(+). MouseY Up(+). Offset(+). Read Up. Shift Down.
+            // Canvas Y (Down+) should Increase.
+            // So v += offY_val? Or is my Mouse Y logic inverted?
+            // Mouse Y: -(e.clientY...) -> Up is +1.
+            // Let's trial and error the Y sign or keep same.
+            
+            // Flip feature.y to match Shader V for calculation?
+            // No, let's work in 0..1 Screen Space (Top-Left 0,0).
+            
+            // Y Correction:
+            // Mouse Y is + (Up). 
+            // If I move mouse Up, MouseY > 0.
+            // Depth > Focus (Close). Offset > 0.
+            // Shader reads Up. Image moves Down.
+            // HUD Box should move Down.
+            // Canvas Y should Increase.
+            // So v += offY_val? (Since offY is +).
+            // Wait, MouseY is +1. offY is +. 
+            // If I do v -= offY, v decreases (Moves Up).
+            // So it must be v += offY_val?
+            // Let's try subtraction first (consistent with X) and flip if needed.
+            // Actually, since Mouse Y is inverted in listener (-1 to 1), but Canvas Y is 0 to Height.
+            // Let's just use subtraction and see.
+            
+            // Note: Since aspect ratio correction happens separately, u/v here are "Normalized Screen Coords inside the image area".
+            
+            // Final Screen Pixel
+            // u, v are 0..1 relative to the displayed image area.
+            
+            let u_final = u - offX_val;
+            // Correct Y direction:
+            // feature.y is 0..1 (Top..Bottom).
+            // Mouse Y is + (Up).
+            // If Mouse Up -> Image Down -> feature.y increases.
+            // offY is +. We need + result.
+            // So feature.y + offY ?
+            // Let's try:
+            let v_final = (feature.y - 0.5) * CONFIG.zoom + 0.5; // Re-apply zoom to Y
+            v_final -= offY_val; // Try minus
+            
+            const sx = offX + u_final * dispW;
+            const sy = offY + v_final * dispH;
+            
+            return { x: sx, y: sy };
+        }
+        const mouse = new THREE.Vector2();
+        const targetMouse = new THREE.Vector2();
+        
+        window.addEventListener('mousemove', (e) => {
+            // Normalize to -1..1
+            targetMouse.x = (e.clientX / window.innerWidth) * 2 - 1;
+            targetMouse.y = -(e.clientY / window.innerHeight) * 2 + 1;
+        });
+
+        // --- Render Loop ---
+        function animate() {
+            requestAnimationFrame(animate);
+            
+            // Smooth Mouse
+            mouse.lerp(targetMouse, 0.05);
+            uniforms.uMouse.value.copy(mouse);
+            
+            renderer.render(scene, camera);
+            renderHUD();
+        }
+        animate();
+        
+        // Start
+        initAI();
+
+        // --- UI Communication ---
+        const UI_CONFIG = [
+            { name: '视差强度', value: 0.15, min: 0.0, max: 0.5, step: 0.01, bind: 'uIntensity' },
+            { name: '对焦深度', value: 0.5, min: 0.0, max: 1.0, step: 0.01, bind: 'uFocus' },
+            { name: '画面缩放', value: 1.05, min: 1.0, max: 1.5, step: 0.01, bind: 'uZoom' },
+            { name: '显示追踪', value: true, type: 'checkbox', bind: 'showTracking' },
+            { name: '追踪样式', value: 0, type: 'select', options: ['Tech', 'Minimal', 'Crosshair'], bind: 'trackingStyle' },
+            { name: '边框类型', value: 1, type: 'select', options: ['Full', 'Bracket', 'Corner'], bind: 'boxStyle' },
+            { name: '连线类型', value: 2, type: 'select', options: ['None', 'Line', 'Curve'], bind: 'lineStyle' },
+            { name: '连线样式', value: 0, type: 'select', options: ['Solid', 'Dashed'], bind: 'lineDash' }
+        ];
+
+        const SOURCE_OPTIONS = [
+            { name: '示例图片 2', value: 's2', type: 'image', path: '../sample/Sample2.jpg' },
+            { name: '示例图片 1', value: 's1', type: 'image', path: '../sample/sample1.jpg' },
+            { name: '示例图片 3', value: 's3', type: 'image', path: '../sample/Sample3.jpg' },
+            { name: '示例图片 4', value: 's4', type: 'image', path: '../sample/Sample4.jpg' }
+        ];
+
+        function sendConfig() {
+            if (window.parent) {
+                window.parent.postMessage({
+                    type: 'UI_CONFIG',
+                    config: UI_CONFIG,
+                    sources: SOURCE_OPTIONS
+                }, '*');
+            }
+        }
+
+        window.addEventListener('message', (event) => {
+            const data = event.data;
+            if (!data) return;
+
+            if (data.type === 'HANDSHAKE') sendConfig();
+
+            if (data.type === 'UPDATE_PARAM') {
+                if (data.key === 'uIntensity') uniforms.uIntensity.value = data.value;
+                if (data.key === 'uFocus') uniforms.uFocus.value = data.value;
+                if (data.key === 'uZoom') uniforms.uZoom.value = data.value;
+                if (data.key === 'showTracking') {
+                    CONFIG.showTracking = data.value;
+                    if (!data.value) ctx.clearRect(0, 0, overlayCanvas.width, overlayCanvas.height);
+                }
+                if (data.key === 'trackingStyle') {
+                    const styles = ['Tech', 'Minimal', 'Crosshair'];
+                    CONFIG.trackingStyle = typeof data.value === 'number' ? styles[data.value] : data.value;
+                }
+                if (data.key === 'boxStyle') {
+                    const styles = ['Full', 'Bracket', 'Corner'];
+                    CONFIG.boxStyle = typeof data.value === 'number' ? styles[data.value] : data.value;
+                }
+                if (data.key === 'lineStyle') {
+                    const styles = ['None', 'Line', 'Curve'];
+                    CONFIG.lineStyle = typeof data.value === 'number' ? styles[data.value] : data.value;
+                }
+                if (data.key === 'lineDash') {
+                    const styles = ['Solid', 'Dashed'];
+                    CONFIG.lineDash = typeof data.value === 'number' ? styles[data.value] : data.value;
+                }
+            }
+
+            if (data.type === 'LOAD_SOURCE') {
+                if (data.source.type === 'image') {
+                    currentImageURL = data.source.path;
+                    if (depthEstimator) {
+                        processImage(currentImageURL);
+                    }
+                }
+            }
+            
+             if (data.type === 'SAVE_IMAGE') {
+                 renderer.render(scene, camera);
+                 const link = document.createElement('a');
+                 link.download = 'depth-parallax.png';
+                 link.href = renderer.domElement.toDataURL('image/png');
+                 link.click();
+            }
+        });
+        
+        window.addEventListener('resize', () => {
+            renderer.setSize(window.innerWidth, window.innerHeight);
+            uniforms.uResolution.value.set(window.innerWidth, window.innerHeight);
+        });
+
+        sendConfig();
+
+    </script>
+</body>
+</html>

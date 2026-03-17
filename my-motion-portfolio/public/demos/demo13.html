@@ -1,0 +1,417 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Demo 13 - Knitting Effect</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/p5.js/1.9.0/p5.min.js"></script>
+    <style>
+        body { margin: 0; overflow: hidden; background-color: #000; }
+        canvas { display: block; }
+    </style>
+</head>
+<body>
+    <script>
+        // --- Configuration & Globals ---
+        let imgs = []; 
+        let originalSource = null; // Store the original high-res image
+        let stitches = []; 
+        let finished; 
+        let rows = 90; 
+        let cols = 90; 
+        let zoom = 1; 
+        let tzoom = 1; 
+        let ease; 
+        let pattern = 0; 
+        let cx, tcx; 
+        
+        // UI Parameters
+        let knitSpeed = 12; // Controls how fast stitches appear (default 4)
+        let stitchTimeStep = 0.03; // Controls animation speed of single stitch
+        let densityValue = 90; // Default density
+
+        // --- Mock p5.Ease ---
+        class Ease {
+            constructor() {}
+            maclaurinCosine(t) {
+                // Standard Ease InOut Cosine
+                // t is 0-1
+                return -(Math.cos(Math.PI * t) - 1) / 2;
+            }
+        }
+
+        // --- Communication Protocol ---
+        const UI_CONFIG = [
+            { name: 'Knitting Speed', value: 12, min: 1, max: 20, step: 1, bind: 'uSpeed' },
+            { name: 'Density', value: 90, min: 50, max: 200, step: 10, bind: 'uDensity' },
+            { name: 'Reset', type: 'button', bind: 'cmd_reset', text: 'Reset Animation' }
+        ];
+
+        function sendConfig() {
+            if (window.parent) {
+                window.parent.postMessage({
+                    type: 'UI_CONFIG',
+                    config: UI_CONFIG,
+                    sources: [
+                        { name: 'Sample 1', value: '../sample/Sample1.jpg', type: 'image' },
+                        { name: 'Sample 2', value: '../sample/Sample2.jpg', type: 'image' },
+                        { name: 'Sample 3', value: '../sample/Sample3.jpg', type: 'image' }
+                    ]
+                }, '*');
+            }
+        }
+
+        window.addEventListener('message', (event) => {
+            const data = event.data;
+            if (!data) return;
+
+            if (data.type === 'HANDSHAKE') sendConfig();
+
+            if (data.type === 'UPDATE_PARAM') {
+                if (data.key === 'uSpeed') {
+                    knitSpeed = data.value;
+                    // Adjust stitch animation speed roughly proportional to appearance speed
+                    stitchTimeStep = map(data.value, 1, 20, 0.005, 0.05);
+                }
+                if (data.key === 'uDensity') {
+                    densityValue = parseInt(data.value, 10);
+                    // We need to calculate cols/rows based on aspect ratio of the image if available
+                    // But here densityValue usually means "shorter side" or "longer side" or just a baseline?
+                    // Let's assume densityValue is the number of rows (vertical resolution)
+                    // and columns are calculated based on aspect ratio
+                    updateGridDimensions();
+                    restartAnimation();
+                }
+                if (data.key === 'cmd_reset') {
+                    restartAnimation();
+                }
+            }
+
+            if (data.type === 'LOAD_SOURCE') {
+                const src = data.source;
+                // Handle both object structure {type, path} and simple string path
+                const path = src.path || src.value || src;
+                
+                if (path) {
+                    loadImage(path, (img) => {
+                        originalSource = img.get(); // Keep a copy of the original
+                        
+                        updateGridDimensions();
+
+                        // Create a working copy for the grid
+                        let gridImg = img.get();
+                        gridImg.resize(cols, rows); 
+                        
+                        imgs = [gridImg]; 
+                        pattern = 0;
+                        restartAnimation();
+                    });
+                }
+            }
+        });
+
+        function updateGridDimensions() {
+            if (originalSource) {
+                // Keep aspect ratio
+                let aspect = originalSource.width / originalSource.height;
+                // Base density on width or height?
+                // Let's base 'densityValue' on the smaller dimension to ensure minimum quality
+                // Or maybe densityValue is rows?
+                // Let's say densityValue is rows.
+                rows = densityValue;
+                cols = Math.floor(rows * aspect);
+            } else {
+                // Default square
+                rows = densityValue;
+                cols = densityValue;
+            }
+        }
+
+        // --- p5.js Sketch ---
+
+        function preload() {
+            // Since we don't have the original jpgs, we'll generate a placeholder in setup
+            // or just leave imgs empty and fill it in setup
+        }
+
+        function setup() {
+            createCanvas(windowWidth, windowHeight);
+            finished = createGraphics(width, height);
+            
+            // Generate a default pattern if none exists
+            if (imgs.length === 0) {
+                let defaultImg = createImage(cols, rows);
+                defaultImg.loadPixels();
+                for (let y = 0; y < rows; y++) {
+                    for (let x = 0; x < cols; x++) {
+                        let c = color(
+                            noise(x * 0.05, y * 0.05) * 255,
+                            noise(x * 0.05 + 100, y * 0.05 + 100) * 255,
+                            noise(x * 0.05 + 200, y * 0.05 + 200) * 255
+                        );
+                        // Add a simple heart shape logic from previous demo for visual interest
+                        let centerX = cols / 2;
+                        let centerY = rows / 2;
+                        let dx = (x - centerX) / (cols/4);
+                        let dy = (y - centerY) / (rows/4);
+                        let heartY = -dy; 
+                        let eq = pow(dx*dx + heartY*heartY - 1, 3) - (dx*dx * pow(heartY, 3));
+                        if (eq <= 0) c = color(255, 100, 150);
+
+                        defaultImg.set(x, y, c);
+                    }
+                }
+                defaultImg.updatePixels();
+                imgs.push(defaultImg);
+            }
+
+            makeStitches();
+            ease = new Ease();
+            imageMode(CENTER);
+            
+            sendConfig();
+        }
+
+        function makeStitches() {
+            cx = width;
+            tcx = width/2;
+            finished.background(0);
+            
+            // Safety check for pattern index
+            if (!imgs[pattern]) return;
+            
+            // Resize if not already (redundant check but safe)
+            if (imgs[pattern].width !== cols || imgs[pattern].height !== rows) {
+                 imgs[pattern].resize(cols, rows);
+            }
+
+            for (let row = 0; row < rows; row++) {
+                for (let col = 0; col < cols; col++) {
+                    // Map grid to screen coordinates
+                    // We need to maintain aspect ratio of the image on screen
+                    
+                    // Calculate display size
+                    // We want to fit the image within the screen but maybe fill width?
+                    // Let's assume we want to fill width if possible, or fit.
+                    // The user said "one side can be cropped to fit canvas"? 
+                    // No, "one side can be cropped to adapt to canvas" (有一边可被裁切来适应画布) usually means "Cover" mode.
+                    
+                    // Let's implement COVER mode logic
+                    let imgAspect = cols / rows;
+                    let screenAspect = width / height;
+                    
+                    let displayW, displayH;
+                    
+                    if (screenAspect > imgAspect) {
+                        // Screen is wider than image -> Match Width, Crop Height (Top/Bottom offscreen)
+                        // Wait, Cover mode means we fill the screen.
+                        // If screen is wider, we need to scale image up so width matches screen width. 
+                        // Then height will be larger than screen height (cropped).
+                        displayW = width;
+                        displayH = width / imgAspect;
+                    } else {
+                        // Screen is taller than image -> Match Height, Crop Width (Sides offscreen)
+                        displayH = height;
+                        displayW = height * imgAspect;
+                    }
+                    
+                    // Map col/row to this display area
+                    // Center the display area
+                    let startX = -displayW / 2;
+                    let startY = -displayH / 2;
+                    
+                    // Coordinates for this stitch
+                    let x_new = map(col, 0, cols - 1, startX, startX + displayW);
+                    let y_new = map(row, 0, rows - 1, startY, startY + displayH);
+
+                    let pos = createVector(x_new, y_new);
+                    let ang = -PI / 8 + (col % 2) * PI / 4;
+                    // Adjust stitch length based on the density relative to display height
+                    let len = 1.66 * displayH / rows; 
+                    
+                    // Get color
+                    let c = imgs[pattern].get(col, row);
+                    let f = color(c);
+                    f.setAlpha(200);
+                    
+                    let scol = col;
+                    if (row % 2) scol = cols - col; // Zigzag stitching order
+                    
+                    let stitch = new Stitch(pos, ang, len, f, row, scol);
+                    stitches.push(stitch);
+                }
+            }
+            
+            stroke(255, 30);
+            strokeWeight(2);
+            finished.stroke(255, 30);
+            finished.strokeWeight(2);
+        }
+
+        function draw() {
+            background(0);
+            cx = lerp(cx, tcx, 0.1);
+            
+            // Clean up finished stitches from array to improve performance?
+            // User code: stitches = stitches.filter(s => s.alive);
+            stitches = stitches.filter(s => s.alive);
+            
+            // Camera / Zoom effect
+            push();
+            translate(cx, zoom * height / 2 - (zoom - 1) * min(frameCount / 6, height));
+            zoom = lerp(zoom, tzoom, 0.1);
+            scale(zoom);
+            
+            image(finished, 0, 0); // Draw the "finished" buffer
+            
+            // Draw active stitches
+            for (let s of stitches) {
+                // Control appearance speed
+                if (frameCount * knitSpeed > s.id) {
+                    s.move();
+                    s.show();
+                }
+            }
+            pop();
+        }
+
+        function mouseWheel(event) {
+            tzoom += event.delta / 500;
+            tzoom = constrain(tzoom, 1, 4)
+        }
+
+        function restartAnimation() {
+            stitches = [];
+            frameCount = 0; // Reset frameCount for timing
+            tzoom = 1;
+            tcx = width/2; // Reset center
+            
+            // Handle density change
+            if (originalSource) {
+                // If we have a user uploaded image, create a new resized version from original
+                // Recalculate grid dimensions to be sure
+                updateGridDimensions();
+
+                let gridImg = originalSource.get();
+                gridImg.resize(cols, rows);
+                imgs[0] = gridImg;
+            } else if (imgs.length > 0 && imgs[pattern]) {
+                // If it's the default generated pattern, we can either:
+                // 1. Regenerate it (best quality)
+                // 2. Just resize current (blurrier)
+                // Let's regenerate for best results
+                let defaultImg = createImage(cols, rows);
+                defaultImg.loadPixels();
+                for (let y = 0; y < rows; y++) {
+                    for (let x = 0; x < cols; x++) {
+                        let c = color(
+                            noise(x * 0.05, y * 0.05) * 255,
+                            noise(x * 0.05 + 100, y * 0.05 + 100) * 255,
+                            noise(x * 0.05 + 200, y * 0.05 + 200) * 255
+                        );
+                        let centerX = cols / 2;
+                        let centerY = rows / 2;
+                        let dx = (x - centerX) / (cols/4);
+                        let dy = (y - centerY) / (rows/4);
+                        let heartY = -dy; 
+                        let eq = pow(dx*dx + heartY*heartY - 1, 3) - (dx*dx * pow(heartY, 3));
+                        if (eq <= 0) c = color(255, 100, 150);
+
+                        defaultImg.set(x, y, c);
+                    }
+                }
+                defaultImg.updatePixels();
+                imgs[0] = defaultImg;
+            }
+            
+            makeStitches();
+        }
+
+        function windowResized() {
+            resizeCanvas(windowWidth, windowHeight);
+            finished = createGraphics(width, height);
+            restartAnimation();
+        }
+
+        // --- Stitch Class ---
+        class Stitch {
+            constructor(pos, ang, len, f, row, col) {
+                let startx = -pos.x / 2;
+                this.pos = createVector(startx, height / 2); // Start from somewhere else
+                this.tpos = pos; // Target position
+                this.ang = 0;
+                this.tang = ang; // Target angle
+                this.len = len;
+                this.f = f; // Color
+                this.row = row;
+                this.col = col;
+                this.counter = 0;
+                this.alive = true;
+                this.t = 0;
+                this.q = 0;
+                // Calculate ID based on zigzag or linear
+                // User code: this.id = row * cols + col;
+                // Note: user logic for 'scol' (zigzag) passed in constructor might be for visual ID?
+                // Actually user passed `scol` but calculated `id` using `row * cols + col`.
+                // This means ID is strictly linear by row. 
+                // However, `scol` logic in makeStitches: `if (row % 2) scol = cols - col;`
+                // This suggests the AUTHOR wanted zigzag order.
+                // But `id` uses `col` (which is the loop index 0..cols).
+                // Let's stick to user code exact logic:
+                // `let stitch = new Stitch(pos, ang, len, f, row, scol);`
+                // `this.id = row * cols + col;` -> Wait, `col` passed here is `scol`!
+                // So yes, it respects zigzag order.
+                this.id = row * cols + col; 
+            }
+
+            show() {
+                // Visual logic
+                let dang = map(this.pos.y, height/2, this.tpos.y, 0, PI);
+                let mult = 1 + 3 * sin(dang);
+                
+                push();
+                translate(this.pos.x, this.pos.y);
+                rotate(this.ang);
+                strokeWeight(1);
+                fill(this.f);
+                ellipse(0, 0, this.len / 2.5, mult * this.len);
+                pop();
+            }
+
+            stamp() {
+                finished.push();
+                finished.translate(width / 2, height / 2); // Center of buffer
+                finished.translate(this.pos.x, this.pos.y);
+                finished.strokeWeight(random(1, 2));
+                finished.scale(random(0.8, 1.1), 1); // Texture variation
+                finished.rotate(this.ang);
+                finished.fill(this.f);
+                finished.ellipse(0, 0, this.len / 2.5, this.len);
+                finished.pop();
+            }
+
+            move() {
+                let q = ease.maclaurinCosine(this.t);
+                this.t += stitchTimeStep; // Use dynamic speed
+                this.t = constrain(this.t, 0.0, 1.0);
+                this.counter += 1;
+                
+                this.pos.lerp(this.tpos, q); // Move towards target
+                
+                // Rotation logic
+                if (this.counter > 25) {
+                    this.ang = lerp(this.ang, this.tang, 0.2);
+                } else {
+                    this.ang = HALF_PI + atan2(this.tpos.y - this.pos.y, this.tpos.x - this.pos.x);
+                }
+                
+                // Stamp to buffer when done
+                if (this.counter > 35) { // User used 35, we can keep or tune
+                    this.stamp();
+                    this.alive = false;
+                }
+            }
+        }
+    </script>
+</body>
+</html>

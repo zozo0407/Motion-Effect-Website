@@ -1,0 +1,159 @@
+%YAML 1.1
+--- !XShader &1
+name: !<str> Template/3d/BoneUnlit
+guid: {a: 10973888045788832903, b: 6164803962954911891}
+renderQueue: 2000
+passes:
+  - __class: Pass
+    name: !<str> pass01
+    guid: {a: 1027929639904933821, b: 18281193408026047679}
+    shaders:
+      __class: Map
+      gles2:
+        - {localId: 2}
+        - {localId: 3}
+      metal:
+        - {localId: 4}
+        - {localId: 5}
+    angleBinaryPrograms:
+      __class: Map
+    semantics:
+      __class: Map
+      attPosition:
+        __class: VertexAttribType
+        value: POSITION
+      attTexcoord0:
+        __class: VertexAttribType
+        value: TEXCOORD0
+    clearColor: {r: 0.5, g: 0.5, b: 0.5, a: 1}
+    clearDepth: 1
+    clearType:
+      __class: CameraClearType
+      value: DONT
+    renderState:
+      __class: RenderState
+      name: !<str> ""
+      guid: {a: 13494128781610955897, b: 4099586336673336761}
+      rasterization:
+        __class: RasterizationState
+        name: !<str> ""
+        guid: {a: 13781577140874444075, b: 10329851481533192889}
+        depthClampEnable: false
+        depthClampEnableName: !<str> ""
+        rasterizerDiscardEnable: false
+        rasterizerDiscardEnableName: !<str> ""
+        polygonMode:
+          __class: PolygonMode
+          value: FILL
+        polygonModeName: !<str> ""
+        cullMode:
+          __class: CullFace
+          value: NONE
+        cullModeName: !<str> ""
+        frontFace:
+          __class: FrontFace
+          value: COUNTER_CLOCKWISE
+        frontFaceName: !<str> ""
+        depthBiasEnable: false
+        depthBiasEnableName: !<str> ""
+        depthBiasConstantFactor: 0
+        depthBiasConstantFactorName: !<str> ""
+        depthBiasClamp: 1
+        depthBiasClampName: !<str> ""
+        depthBiasSlopeFactor: 1
+        depthBiasSlopeFactorName: !<str> ""
+        lineWidth: 1
+        lineWidthName: !<str> ""
+      depthstencil:
+        __class: DepthStencilState
+        name: !<str> ""
+        guid: {a: 2756322769977766035, b: 9407320408189192352}
+        depthTestEnable: true
+        depthTestEnableName: !<str> ""
+        depthCompareOp:
+          __class: CompareOp
+          value: LESS
+        depthCompareOpName: !<str> ""
+        depthWriteEnable: true
+        stencilTestEnable: false
+        stencilTestEnableName: !<str> ""
+      colorBlend:
+        __class: ColorBlendState
+        name: !<str> ""
+        guid: {a: 17312721030319022729, b: 9259530889526533788}
+        blendConstants: {x: 0, y: 0, z: 0, w: 0}
+        blendEnableName: !<str> ""
+        blendFactorName: !<str> ""
+        blendOpName: !<str> ""
+        attachments:
+          - __class: ColorBlendAttachmentState
+            name: !<str> ""
+            guid: {a: 4560726954139994681, b: 117533666292093862}
+            blendEnable: true
+            srcColorBlendFactor:
+              __class: BlendFactor
+              value: ONE
+            dstColorBlendFactor:
+              __class: BlendFactor
+              value: ONE_MINUS_SRC_ALPHA
+            srcAlphaBlendFactor:
+              __class: BlendFactor
+              value: ONE
+            dstAlphaBlendFactor:
+              __class: BlendFactor
+              value: ONE_MINUS_SRC_ALPHA
+            colorWriteMask: 15
+            ColorBlendOp:
+              __class: BlendOp
+              value: ADD
+            AlphaBlendOp:
+              __class: BlendOp
+              value: ADD
+    useFBOTexture: false
+    useCameraRT: false
+    useFBOFetch: false
+    enableFBOFetch: false
+    isFullScreenShading: false
+    macrosMap:
+      __class: Map
+    preprocess: false
+    passType:
+      __class: PassType
+      value: NORMAL
+    lightMode:
+      __class: LightMode
+      value: NONE
+    clearMoment:
+      __class: PassClearMoment
+      value: CLEAR_BEFORE_RENDERING
+    instanceCount: 0
+    useGrabTexture: false
+    useGrabTextureMipmap: false
+    grabTextureName: !<str> ""
+    auslSourcePath: !<str> ""
+--- !Shader &2
+name: !<str> ""
+guid: {a: 812239197841834599, b: 6322209207227399580}
+type:
+  __class: ShaderType
+  value: VERTEX
+sourcePath: !<str> xshader/Unlit.vert
+--- !Shader &3
+name: !<str> ""
+guid: {a: 9172690372814228182, b: 11347637667761521080}
+type:
+  __class: ShaderType
+  value: FRAGMENT
+sourcePath: !<str> xshader/Unlit.frag
+--- !Shader &4
+name: !<str> ""
+type:
+  __class: ShaderType
+  value: VERTEX
+sourcePath: !<str> xshader/Unlit.vert.metal
+--- !Shader &5
+name: !<str> ""
+type:
+  __class: ShaderType
+  value: FRAGMENT
+sourcePath: !<str> xshader/Unlit.frag.metal

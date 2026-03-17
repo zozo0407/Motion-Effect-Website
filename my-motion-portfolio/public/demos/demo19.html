@@ -1,0 +1,219 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Demo 19 - Rainy Night (Cyberpunk Port)</title>
+    <style>
+        body { margin: 0; overflow: hidden; background: #000; }
+        #container { width: 100vw; height: 100vh; }
+    </style>
+    <!-- Import Map for Three.js -->
+    <script type="importmap">
+        {
+            "imports": {
+                "three": "../js/libs/three/three.module.js",
+                "three/addons/": "../js/libs/three/addons/"
+            }
+        }
+    </script>
+</head>
+<body>
+    <div id="container"></div>
+
+    <script type="module">
+        import { UnifiedRenderer } from '../js/UnifiedRenderer.js';
+        import * as THREE from 'three';
+
+        // --- Rainy Night GLSL Shader ---
+        // Inspired by "Heartfelt" by BigWIngs, simplified for single pass
+        const fragmentShader = `
+            uniform float uTime;
+            uniform vec2 uResolution;
+            uniform vec2 uMouse;
+            uniform float uRainAmount;
+            uniform float uBlurQuality;
+            uniform vec3 uColorTint;
+
+            #define S(a, b, t) smoothstep(a, b, t)
+
+            vec3 N13(float p) {
+               vec3 p3 = fract(vec3(p) * vec3(.1031, .11369, .13787));
+               p3 += dot(p3, p3.yzx + 19.19);
+               return fract(vec3((p3.x + p3.y)*p3.z, (p3.x+p3.z)*p3.y, (p3.y+p3.z)*p3.x));
+            }
+
+            vec4 N14(float t) {
+                return fract(sin(t*vec4(123., 1024., 1456., 264.))*vec4(6547., 345., 8799., 1564.));
+            }
+
+            float N(float t) {
+                return fract(sin(t*12345.564)*7658.76);
+            }
+
+            float Saw(float b, float t) {
+                return S(0., b, t)*S(1., b, t);
+            }
+
+            vec2 DropLayer2(vec2 uv, float t) {
+                vec2 UV = uv;
+                
+                uv.y += t*0.75;
+                vec2 a = vec2(6., 1.);
+                vec2 grid = a*2.;
+                vec2 id = floor(uv*grid);
+                
+                float colShift = N(id.x); 
+                uv.y += colShift;
+                
+                id = floor(uv*grid);
+                vec3 n = N13(id.x*35.2+id.y*2376.1);
+                vec2 st = fract(uv*grid)-vec2(.5, 0);
+                
+                float x = n.x-.5;
+                
+                float y = UV.y*20.;
+                float wiggle = sin(y+sin(y));
+                x += wiggle*(.5-abs(x))*(n.z-.5);
+                x *= .7;
+                float ti = fract(t+n.z);
+                float y2 = (Saw(.85, ti)-.5)*.9+.5;
+                vec2 p = vec2(x, y2);
+                
+                float d = length((st-p)*a.yx);
+                
+                float mainDrop = S(.4, .0, d);
+                
+                float r = sqrt(S(1., y2, st.y));
+                float cd = abs(st.x-x);
+                float trail = S(.23*r, .15*r*r, cd);
+                float trailFront = S(-.02, .02, st.y-y2);
+                trail *= trailFront*r*r;
+                
+                y = UV.y;
+                float trail2 = S(.2*r, .0, cd);
+                float droplet = max(mainDrop, trail);
+                
+                return vec2(droplet, st.x-x); 
+            }
+
+            float Drop(vec2 uv, float t) {
+                vec2 UV = uv;
+                
+                uv.y += t*0.75;
+                vec2 a = vec2(6., 1.);
+                vec2 grid = a*2.;
+                vec2 id = floor(uv*grid);
+                
+                float colShift = N(id.x); 
+                uv.y += colShift;
+                
+                id = floor(uv*grid);
+                vec3 n = N13(id.x*35.2+id.y*2376.1);
+                vec2 st = fract(uv*grid)-vec2(.5, 0);
+                
+                float x = n.x-.5;
+                
+                float y = UV.y*20.;
+                float wiggle = sin(y+sin(y));
+                x += wiggle*(.5-abs(x))*(n.z-.5);
+                x *= .7;
+                float ti = fract(t+n.z);
+                float y2 = (Saw(.85, ti)-.5)*.9+.5;
+                vec2 p = vec2(x, y2);
+                
+                float d = length((st-p)*a.yx);
+                
+                float mainDrop = S(.4, .0, d);
+                
+                float r = sqrt(S(1., y2, st.y));
+                float cd = abs(st.x-x);
+                float trail = S(.23*r, .15*r*r, cd);
+                float trailFront = S(-.02, .02, st.y-y2);
+                trail *= trailFront*r*r;
+                
+                return max(mainDrop, trail);
+            }
+
+            vec3 Bokeh(vec2 uv, vec2 p, float r, vec3 col) {
+                float d = length(uv-p);
+                float c = S(r, r-0.01, d);
+                return col * c; 
+            }
+            
+            vec3 StreetLights(vec2 uv, float t) {
+                vec3 col = vec3(0.);
+                
+                for(float i=0.; i<10.; i+=1.) {
+                    float n = N(i);
+                    vec2 p = vec2(n-.5, N(i*2.1)-.5);
+                    p.x *= 1.7; // Aspect correction approximate
+                    vec3 color = sin(vec3(.2, .5, .9)*i*20.)*.5+.5;
+                    color *= uColorTint; // Tint
+                    
+                    // Moving lights
+                    p.x += (fract(t*0.1 + i*0.1)-0.5)*3.0;
+                    
+                    col += Bokeh(uv, p, 0.05 + n*0.1, color);
+                }
+                return col;
+            }
+
+            void main() {
+                vec2 uv = (gl_FragCoord.xy - .5*uResolution.xy) / uResolution.y;
+                vec2 UV = gl_FragCoord.xy / uResolution.xy;
+                
+                float t = uTime * 0.2;
+                
+                // Raindrops
+                float rainAmount = uRainAmount;
+                vec2 dropUV = uv * 2.0; // Scale drops
+                
+                vec2 drop = DropLayer2(dropUV, t);
+                float drops = drop.x;
+                
+                // Distort UVs based on drops
+                vec2 bgUV = uv - vec2(drop.y, 0.0) * 0.5 * drops;
+                
+                // Background (Bokeh City)
+                // Use a simple procedural bokeh city instead of a texture
+                // In a real app we'd sample a texture here: texture2D(uChannel0, bgUV)
+                
+                vec3 bg = StreetLights(bgUV * 2.0, t);
+                bg += StreetLights(bgUV * 1.5 + vec2(0.5, 0.5), t + 10.0) * 0.5;
+                
+                // Blur effect (simulated)
+                // In single pass, we just make the bokeh shapes soft
+                
+                // Add drops to color (specular)
+                bg += drops * 0.5;
+                
+                // Vignette
+                bg *= 1.0 - length(uv)*0.5;
+                
+                gl_FragColor = vec4(bg, 1.0);
+            }
+        `;
+
+        // --- Init Renderer ---
+        const renderer = new UnifiedRenderer({
+            container: document.getElementById('container'),
+            type: 'shader',
+            mouseDragOnly: true, // Only update mouse on drag
+            fragmentShader: fragmentShader,
+            params: {
+                uRainAmount: 1.0,
+                uBlurQuality: 1.0,
+                uColorTint: new THREE.Color(1.0, 0.8, 1.0)
+            },
+            init: (app) => {
+                console.log('Rainy Night Demo Initialized');
+                app.setUI([
+                    { name: 'Rain Amount', value: 1.0, min: 0.0, max: 2.0, step: 0.1, bind: 'uRainAmount' },
+                    { name: 'Tint Color', type: 'color', value: '#ffccff', bind: 'uColorTint' }
+                ]);
+            }
+        });
+    </script>
+</body>
+</html>

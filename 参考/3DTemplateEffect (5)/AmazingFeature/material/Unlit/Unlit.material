@@ -1,0 +1,37 @@
+%YAML 1.1
+--- !Material &1
+name: !<str> template0
+guid: {a: 11333968224913900065, b: 4377114236209382589}
+xshader: {localId: 1, path: xshader/Unlit.xshader}
+properties:
+  __class: PropertySheet
+  name: !<str> template0_propertySheet
+  guid: {a: 14288287772054311328, b: 13338665779146375825}
+  floatmap:
+    __class: Map
+    u_Opacity: 1
+    u_Translucency: 1
+  vec4map:
+    __class: Map
+    u_AlbedoColor: {x: 1, y: 1, z: 1, w: 1}
+  vec3map:
+    __class: Map
+  vec2map:
+    __class: Map
+    u_Offset: {x: 0, y: 0}
+    u_Repeat: {x: 1, y: 1}
+  mat4map:
+    __class: Map
+  texmap:
+    __class: Map
+    u_AlbedoTexture: {localId: 1, path: image/checkerboard.png}
+  intmap:
+    __class: Map
+renderQueue: -1
+enabledMacros:
+  __class: Map
+  AE_AreaLightNum: !<str> 0
+  AE_DirLightNum: !<str> 0
+  AE_PointLightNum: !<str> 0
+  AE_SpotLightNum: !<str> 0
+mshaderPath: !<str> ""

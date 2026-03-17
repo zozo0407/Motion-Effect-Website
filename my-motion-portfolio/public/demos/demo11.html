@@ -1,0 +1,664 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Demo 11 - Geometric Tomato Brush</title>
+    <style>
+        body { margin: 0; overflow: hidden; background-color: #ffffff; user-select: none; }
+        #canvas-container { position: absolute; top: 0; left: 0; width: 100%; height: 100%; }
+        #instructions {
+            position: absolute;
+            bottom: 30px;
+            width: 100%;
+            text-align: center;
+            color: rgba(0, 0, 0, 0.6);
+            font-family: monospace;
+            pointer-events: none;
+            font-size: 14px;
+        }
+        #preview-container {
+            position: absolute;
+            bottom: 20px;
+            right: 20px;
+            width: 320px;
+            height: 180px;
+            border-radius: 12px;
+            overflow: hidden;
+            box-shadow: 0 4px 12px rgba(0,0,0,0.2);
+            z-index: 10;
+            background: #000;
+            transform: scaleX(-1); /* Mirror preview to match interaction */
+        }
+        #preview-canvas {
+            width: 100%;
+            height: 100%;
+        }
+    </style>
+    <script type="importmap">
+        {
+            "imports": {
+                "three": "https://unpkg.com/three@0.160.0/build/three.module.js",
+                "three/addons/": "https://unpkg.com/three@0.160.0/examples/jsm/"
+            }
+        }
+    </script>
+    <!-- REMOVED MediaPipe for Network Compatibility -->
+</head>
+<body>
+    <div id="canvas-container"></div>
+    <div id="instructions">DRAW TO PLANT • 3S LIFECYCLE</div>
+
+    <script type="module">
+        import * as THREE from 'three';
+
+        // --- Config ---
+        const CONFIG = {
+            colorStem: 0x0ead69, // 绿色藤蔓
+            colorTomato: 0xee4266, // 红色
+            growthSpeed: 2, // Segments per frame
+            segmentLength: 0.5,
+            stemThickness: 0.15,
+            tomatoSize: 1.0, // 4x larger (was 0.25)
+            lifeTime: 3000, // ms
+            dissolveDuration: 1000, // ms
+            phrases: [
+                ['柿', '柿', '如', '意'],
+                ['好', '运', '番', '倍'],
+                ['万', '柿', '大', '吉'],
+                ['柿', '柿', '顺', '心'],
+                ['好', '柿', '连', '连']
+            ]
+        };
+
+        // --- Scene Setup ---
+        const container = document.getElementById('canvas-container');
+        const scene = new THREE.Scene();
+        scene.background = new THREE.Color(0xffffff);
+        // scene.fog = new THREE.Fog(0x1a1a1a, 20, 50);
+
+        // Camera: Orthographic for a flat, technical illustration look.
+        const aspect = window.innerWidth / window.innerHeight;
+        const frustumSize = 30;
+        const camera = new THREE.OrthographicCamera(
+            frustumSize * aspect / -2, frustumSize * aspect / 2, 
+            frustumSize / 2, frustumSize / -2, 
+            0.1, 1000
+        );
+        camera.position.set(0, 0, 30);
+        camera.lookAt(0, 0, 0);
+
+        const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true, preserveDrawingBuffer: true });
+        renderer.setSize(window.innerWidth, window.innerHeight);
+        renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+        renderer.shadowMap.enabled = true;
+        renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+        container.appendChild(renderer.domElement);
+
+        // Lighting - REMOVED for Flat Look
+        // const ambientLight = new THREE.AmbientLight(0xffffff, 0.6);
+        // scene.add(ambientLight);
+
+        // const dirLight = new THREE.DirectionalLight(0xffffff, 0.8);
+        // dirLight.position.set(10, 20, 20);
+        // dirLight.castShadow = true;
+        // scene.add(dirLight);
+
+        // const pointLight = new THREE.PointLight(0xffaa00, 0.5, 50);
+        // pointLight.position.set(-10, 10, 10);
+        // scene.add(pointLight);
+
+        // --- Interaction Plane ---
+        // Invisible plane at Z=0 to catch mouse
+        const raycaster = new THREE.Raycaster();
+        const mouse = new THREE.Vector2();
+        const planeGeo = new THREE.PlaneGeometry(100, 100);
+        const planeMat = new THREE.MeshBasicMaterial({ visible: false });
+        const hitPlane = new THREE.Mesh(planeGeo, planeMat);
+        scene.add(hitPlane);
+
+        // --- State ---
+        let isDrawing = false;
+        let currentPathPoints = [];
+        let vines = []; // Array of Vine instances
+
+        // --- Geometries & Materials (Reuse) ---
+        // Low Poly Cylinder
+        const stemGeo = new THREE.CylinderGeometry(CONFIG.stemThickness, CONFIG.stemThickness, 1, 6);
+        stemGeo.translate(0, 0.5, 0); // Pivot at base
+        stemGeo.rotateX(Math.PI / 2); // Align to Z axis initially for lookAt logic? Or Y? 
+        // Standard Cylinder is Y-up. Let's keep it Y-up, and we will use lookAt + rotateX(PI/2).
+        // Actually, if we use lookAt(target), the object's +Z points to target.
+        // Cylinder is along Y. So we need to rotate geometry so it lies along Z?
+        // Let's simpler: connect point A to B. Midpoint, lookAt, scale Z?
+        // Let's use the standard "Cylinder from A to B" math.
+        
+        // Let's recreate geometry to be Y-axis aligned (default), pivot at bottom (y=0)
+        const stemGeometry = new THREE.CylinderGeometry(CONFIG.stemThickness, CONFIG.stemThickness, 1, 5);
+        stemGeometry.translate(0, 0.5, 0); // Base at 0,0,0, Top at 0,1,0
+        
+        const stemMaterial = new THREE.MeshBasicMaterial({ 
+            color: CONFIG.colorStem
+        });
+
+        const tomatoGeometry = new THREE.IcosahedronGeometry(CONFIG.tomatoSize, 1); // Subdivided Icosahedron (Not perfect sphere)
+        const tomatoMaterial = new THREE.MeshBasicMaterial({ 
+            color: CONFIG.colorTomato
+        });
+        
+        // Create Canvas Textures for Characters
+        function createCharTexture(char) {
+            const canvas = document.createElement('canvas');
+            canvas.width = 128;
+            canvas.height = 128;
+            const ctx = canvas.getContext('2d');
+            
+            // Background (Transparent)
+            // ctx.fillStyle = 'rgba(255,0,0,0.5)';
+            // ctx.fillRect(0,0,128,128);
+            
+            // Text
+            ctx.fillStyle = '#f5da51'; // Updated Gold Text
+            ctx.font = 'bold 80px "Microsoft YaHei", sans-serif';
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'middle';
+            ctx.fillText(char, 64, 64);
+            
+            const tex = new THREE.CanvasTexture(canvas);
+            return tex;
+        }
+        
+        const uniqueChars = [...new Set(CONFIG.phrases.flat())];
+        const charTextures = {};
+        
+        uniqueChars.forEach(char => {
+            charTextures[char] = createCharTexture(char);
+        });
+        
+        const charMaterials = {};
+        Object.keys(charTextures).forEach(char => {
+             charMaterials[char] = new THREE.MeshBasicMaterial({ 
+                 map: charTextures[char], 
+                 transparent: true,
+                 depthTest: false,
+                 depthWrite: false
+             });
+        });
+
+        const textPlaneGeo = new THREE.PlaneGeometry(1.6, 1.6); // Slightly larger than radius 1.0
+
+        // --- Classes ---
+        let globalPhraseIndex = 0; // Track which phrase to use next
+
+        class Vine {
+            constructor(points) {
+                this.points = points;
+                this.spline = new THREE.CatmullRomCurve3(points);
+                // Subdivide spline into segments
+                // Length of curve
+                const length = this.spline.getLength();
+                const segmentsCount = Math.floor(length / CONFIG.segmentLength);
+                
+                this.pathPoints = this.spline.getSpacedPoints(segmentsCount);
+                this.meshes = [];
+                this.tomatoes = [];
+                
+                this.currentIndex = 0;
+                this.tomatoCount = 0; // Track tomato index for text
+                this.isGrowing = true;
+                this.isDead = false;
+                
+                // Select Phrase
+                this.phrase = CONFIG.phrases[globalPhraseIndex % CONFIG.phrases.length];
+                globalPhraseIndex++;
+                
+                this.age = 0;
+                this.lifespan = CONFIG.lifeTime;
+                
+                // Group to hold everything
+                this.group = new THREE.Group();
+                scene.add(this.group);
+            }
+
+            update(dt) {
+                if (this.isDead) return;
+
+                // Growth Phase
+                if (this.isGrowing) {
+                    // Add N segments per frame
+                    for (let k = 0; k < CONFIG.growthSpeed; k++) {
+                        if (this.currentIndex >= this.pathPoints.length - 1) {
+                            this.isGrowing = false;
+                            
+                            // Check remainder and hide text on orphan tomatoes
+                            const remainder = this.tomatoCount % 4;
+                            if (remainder > 0) {
+                                // The last 'remainder' tomatoes should have their text hidden
+                                const startIdx = this.tomatoes.length - remainder;
+                                for (let i = startIdx; i < this.tomatoes.length; i++) {
+                                    const t = this.tomatoes[i];
+                                    if (t.userData.textMesh) {
+                                        t.userData.textMesh.visible = false;
+                                    }
+                                }
+                            }
+                            
+                            break;
+                        }
+
+                        this.addSegment(this.currentIndex);
+                        this.currentIndex++;
+                    }
+                } else {
+                    // Alive Phase
+                    this.age += dt;
+                    if (this.age > this.lifespan) {
+                        this.dissolve(dt);
+                    }
+                }
+
+                // Animate existing meshes (Pop-in)
+                for (let i = 0; i < this.meshes.length; i++) {
+                    const m = this.meshes[i];
+                    if (m.userData.targetScale) {
+                        m.scale.lerp(m.userData.targetScale, 0.1);
+                    }
+                }
+                
+                // Animate tomatoes
+                for (let i = 0; i < this.tomatoes.length; i++) {
+                    const t = this.tomatoes[i];
+                    if (t.userData.targetScale) {
+                        t.scale.lerp(t.userData.targetScale, 0.1);
+                    }
+                }
+            }
+
+            addSegment(index) {
+                const p1 = this.pathPoints[index];
+                const p2 = this.pathPoints[index + 1];
+                
+                // Create Stem Segment
+                const dist = p1.distanceTo(p2);
+                const mesh = new THREE.Mesh(stemGeometry, stemMaterial);
+                
+                mesh.position.copy(p1);
+                mesh.lookAt(p2);
+                mesh.rotateX(Math.PI / 2); // Align Y-axis cylinder to Z-axis lookAt direction
+                
+                // Scale Y is the length
+                mesh.scale.set(0, 0, 0); // Start invisible
+                mesh.userData.targetScale = new THREE.Vector3(1, dist, 1);
+                
+                // mesh.castShadow = true;
+                // mesh.receiveShadow = true;
+                
+                this.group.add(mesh);
+                this.meshes.push(mesh);
+
+                // Add Tomato?
+                // Logic: Add every 3rd segment
+                if (index > 0 && index < this.pathPoints.length - 2 && index % 3 === 0) {
+                    this.addTomato(p1, p2, index);
+                }
+            }
+
+            addTomato(p1, p2, index) {
+                // Position at the joint (p1)
+                // Offset to side.
+                // Tangent vector
+                const tangent = new THREE.Vector3().subVectors(p2, p1).normalize();
+                
+                // Cross product of Tangent and Z-axis gives vector in XY plane perpendicular to tangent
+                const zAxis = new THREE.Vector3(0, 0, 1);
+                const side = new THREE.Vector3().crossVectors(tangent, zAxis).normalize();
+                
+                // Alternate sides: Even count -> Right, Odd count -> Left
+                // We want 1st (index 0) -> Right (+side)
+                // 2nd (index 1) -> Left (-side)
+                
+                // tomatoCount starts at 0.
+                // If count=0 (1st), we want Right (+side). Do nothing.
+                // If count=1 (2nd), we want Left (-side). Negate.
+                if (this.tomatoCount % 2 !== 0) {
+                    side.negate();
+                }
+                
+                // Add some random variation to branch direction
+                side.applyAxisAngle(tangent, (Math.random() - 0.5) * 0.4); // Reduced random angle for clearer alternation
+
+                // --- Create Branch ---
+                const branchLength = 0.8 + Math.random() * 0.7; // Random length 0.8 - 1.5
+                const branchThickness = CONFIG.stemThickness * 0.6;
+                const branchEnd = p1.clone().add(side.clone().multiplyScalar(branchLength));
+
+                const branchMesh = new THREE.Mesh(stemGeometry, stemMaterial);
+                branchMesh.position.copy(p1);
+                branchMesh.lookAt(branchEnd);
+                branchMesh.rotateX(Math.PI / 2);
+                
+                branchMesh.scale.set(0, 0, 0);
+                const thickScale = branchThickness / CONFIG.stemThickness;
+                branchMesh.userData.targetScale = new THREE.Vector3(thickScale, branchLength, thickScale);
+                
+                // branchMesh.castShadow = true;
+                // branchMesh.receiveShadow = true;
+                
+                this.group.add(branchMesh);
+                this.meshes.push(branchMesh);
+
+                // --- Create Tomato at Branch End ---
+                const tomato = new THREE.Mesh(tomatoGeometry, tomatoMaterial);
+                tomato.position.copy(branchEnd);
+                
+                // Random Size Variation (0.9x to 1.1x of base size)
+                const randomScale = 0.9 + Math.random() * 0.2; 
+                tomato.scale.set(0, 0, 0);
+                tomato.userData.targetScale = new THREE.Vector3(randomScale, randomScale, randomScale);
+                
+                // tomato.castShadow = true;
+                this.group.add(tomato);
+                this.tomatoes.push(tomato);
+                
+                // --- Add Text Plane ---
+                // Logic: Only show text if we can complete a full phrase (4 chars).
+                // But we generate tomatoes sequentially. We don't know total count yet?
+                // Or user means: Only show text on tomatoes that are part of a full group of 4.
+                // e.g. 1,2,3,4 have text. 5,6,7,8 have text. 9 (orphan) has NO text.
+                // Problem: We add tomatoes one by one in real-time. We don't know if #9 will be the last one until drawing ends or growth ends.
+                // Growth ends when path is done.
+                // We know total path length in constructor. We can estimate tomato count.
+                // Or simpler: Always add text, but if we end with a remainder, remove the text from the last few?
+                // Yes, post-processing after growth finishes?
+                // Or better: Store references to text meshes. When growth finishes (or dispose), check count.
+                // If count % 4 != 0, hide text on the last (count % 4) tomatoes.
+                
+                // Let's implement the post-check in the update loop when growth finishes.
+                
+                // Loop through the selected phrase for this vine
+                const charIndex = this.tomatoCount % this.phrase.length;
+                const char = this.phrase[charIndex];
+                const textMat = charMaterials[char];
+                
+                const textMesh = new THREE.Mesh(textPlaneGeo, textMat);
+                
+                textMesh.position.set(0, 0, CONFIG.tomatoSize + 0.05);
+                
+                tomato.add(textMesh);
+                // Store reference for cleanup
+                tomato.userData.textMesh = textMesh;
+                
+                this.tomatoCount++;
+            }
+
+            dissolve(dt) {
+                // Shrink everything
+                let finished = true;
+                
+                // Shrink Stems
+                this.meshes.forEach(m => {
+                    m.userData.targetScale.set(0, 0, 0);
+                    if (m.scale.x > 0.01) finished = false;
+                });
+                
+                // Shrink Tomatoes
+                this.tomatoes.forEach(t => {
+                    t.userData.targetScale.set(0, 0, 0);
+                    if (t.scale.x > 0.01) finished = false;
+                });
+
+                if (finished) {
+                    this.dispose();
+                }
+            }
+
+            dispose() {
+                this.isDead = true;
+                scene.remove(this.group);
+                // Geometries and Materials are shared, so we don't dispose them here.
+                // Just clear arrays.
+                this.meshes = [];
+                this.tomatoes = [];
+                // Remove from global vines array
+                const idx = vines.indexOf(this);
+                if (idx > -1) vines.splice(idx, 1);
+            }
+        }
+
+        // --- Event Listeners (Mouse) ---
+        // REMOVED Mouse listeners for Hand Tracking
+        
+        // --- Event Listeners ---
+        // Temporary Line for drawing feedback
+        // Use TubeGeometry or thick Line2 for visibility?
+        // Standard THREE.Line width is limited to 1px on most WebGL implementations (Windows).
+        // Let's use a Mesh (Tube) or just rely on points?
+        // Let's use a TubeGeometry updated dynamically or MeshLine if available.
+        // For simplicity without external deps, let's use many small spheres or a Tube.
+        // Tube is heavy to reconstruct every frame.
+        // Let's use a "Ribbon" using TriangleStrip or just high contrast points.
+        // Or simpler: TubeGeometry re-generated on update. Performance might be ok for short lines.
+        
+        // Actually, let's just make it a thick tube.
+        const tempLineMaterial = new THREE.MeshBasicMaterial({ color: 0x444444 });
+        let tempLineMesh = new THREE.Mesh(new THREE.BufferGeometry(), tempLineMaterial);
+        scene.add(tempLineMesh);
+
+        function updateTempLine() {
+            if (currentPathPoints.length > 1) {
+                // Create a Tube
+                const curve = new THREE.CatmullRomCurve3(currentPathPoints);
+                const geometry = new THREE.TubeGeometry(curve, currentPathPoints.length * 2, 0.1, 8, false);
+                
+                tempLineMesh.geometry.dispose();
+                tempLineMesh.geometry = geometry;
+                tempLineMesh.visible = true;
+            } else {
+                tempLineMesh.visible = false;
+            }
+        }
+        
+        // --- Mouse Interaction (Restored) ---
+        window.addEventListener('mousedown', (e) => {
+            isDrawing = true;
+            currentPathPoints = [];
+            
+            // Capture first point
+            updateMouse(e);
+            raycaster.setFromCamera(mouse, camera);
+            const intersects = raycaster.intersectObject(hitPlane);
+            if (intersects.length > 0) {
+                currentPathPoints.push(intersects[0].point);
+            }
+        });
+
+        window.addEventListener('mousemove', (e) => {
+            if (!isDrawing) return;
+            
+            updateMouse(e);
+            raycaster.setFromCamera(mouse, camera);
+            const intersects = raycaster.intersectObject(hitPlane);
+            if (intersects.length > 0) {
+                const p = intersects[0].point;
+                // Min distance check
+                const lastP = currentPathPoints[currentPathPoints.length - 1];
+                if (lastP && p.distanceTo(lastP) > 0.5) {
+                    currentPathPoints.push(p);
+                    updateTempLine();
+                }
+            }
+        });
+
+        window.addEventListener('mouseup', () => {
+            isDrawing = false;
+            
+            // Create Vine if we have enough points
+            if (currentPathPoints.length > 2) {
+                const vine = new Vine(currentPathPoints);
+                vines.push(vine);
+            }
+            
+            // Reset temp line
+            currentPathPoints = [];
+            updateTempLine();
+        });
+
+        function updateMouse(e) {
+            mouse.x = (e.clientX / window.innerWidth) * 2 - 1;
+            mouse.y = -(e.clientY / window.innerHeight) * 2 + 1;
+        }
+
+        /*
+        window.addEventListener('mousedown', (e) => {
+            isDrawing = true;
+            currentPathPoints = [];
+            
+            // Capture first point
+            updateMouse(e);
+            raycaster.setFromCamera(mouse, camera);
+            const intersects = raycaster.intersectObject(hitPlane);
+            if (intersects.length > 0) {
+                currentPathPoints.push(intersects[0].point);
+            }
+        });
+
+        window.addEventListener('mousemove', (e) => {
+            if (!isDrawing) return;
+            
+            updateMouse(e);
+            raycaster.setFromCamera(mouse, camera);
+            const intersects = raycaster.intersectObject(hitPlane);
+            if (intersects.length > 0) {
+                const p = intersects[0].point;
+                // Min distance check
+                const lastP = currentPathPoints[currentPathPoints.length - 1];
+                if (lastP && p.distanceTo(lastP) > 0.5) {
+                    currentPathPoints.push(p);
+                    updateTempLine();
+                }
+            }
+        });
+
+        window.addEventListener('mouseup', () => {
+            isDrawing = false;
+            
+            // Create Vine if we have enough points
+            if (currentPathPoints.length > 2) {
+                const vine = new Vine(currentPathPoints);
+                vines.push(vine);
+            }
+            
+            // Reset temp line
+            currentPathPoints = [];
+            updateTempLine();
+        });
+
+        function updateMouse(e) {
+            mouse.x = (e.clientX / window.innerWidth) * 2 - 1;
+            mouse.y = -(e.clientY / window.innerHeight) * 2 + 1;
+        }
+        */
+
+        window.addEventListener('resize', () => {
+            const aspect = window.innerWidth / window.innerHeight;
+            const frustumSize = 30;
+            camera.left = -frustumSize * aspect / 2;
+            camera.right = frustumSize * aspect / 2;
+            camera.top = frustumSize / 2;
+            camera.bottom = -frustumSize / 2;
+            camera.updateProjectionMatrix();
+            renderer.setSize(window.innerWidth, window.innerHeight);
+        });
+
+        // --- Animation Loop ---
+        const clock = new THREE.Clock();
+
+        function animate() {
+            requestAnimationFrame(animate);
+            
+            const dt = clock.getDelta() * 1000; // ms
+
+            // Iterate backwards to allow safe removal
+            for (let i = vines.length - 1; i >= 0; i--) {
+                vines[i].update(dt);
+            }
+
+            renderer.render(scene, camera);
+        }
+
+        animate();
+
+        // --- Universal Recorder & Screenshot Adapter ---
+        window.addEventListener('message', (e) => {
+            if (!e.data) return;
+            
+            // 1. Screenshot
+            if (e.data.type === 'SAVE_IMAGE') {
+                const canvas = document.querySelector('canvas');
+                if (canvas) {
+                    const dataUrl = canvas.toDataURL('image/png');
+                    try {
+                        if (window.parent) {
+                            window.parent.postMessage({ type: 'IMAGE_DATA', dataUrl }, '*');
+                        }
+                    } catch (_) {}
+                    const link = document.createElement('a');
+                    link.download = `capture-${Date.now()}.png`;
+                    link.href = dataUrl;
+                    link.click();
+                }
+            }
+
+            // 2. Recording
+            if (e.data.type === 'START_REC') {
+                const canvas = document.querySelector('canvas');
+                if (canvas) {
+                    const stream = canvas.captureStream(60);
+                    // MIME Check
+                    let mimeType = 'video/webm;codecs=vp9';
+                    if (!MediaRecorder.isTypeSupported(mimeType)) {
+                        mimeType = 'video/webm';
+                        if (!MediaRecorder.isTypeSupported(mimeType)) mimeType = 'video/mp4';
+                    }
+                    
+                    try {
+                        window.mediaRecorder = new MediaRecorder(stream, { mimeType });
+                    } catch(err) {
+                        console.warn("Recorder init failed, trying default", err);
+                        window.mediaRecorder = new MediaRecorder(stream);
+                    }
+                    
+                    window.recordedChunks = [];
+                    
+                    window.mediaRecorder.ondataavailable = (e) => {
+                        if (e.data.size > 0) window.recordedChunks.push(e.data);
+                    };
+                    
+                    window.mediaRecorder.onstop = () => {
+                        const blob = new Blob(window.recordedChunks, { type: window.mediaRecorder.mimeType || 'video/webm' });
+                        try {
+                            if (window.parent) {
+                                window.parent.postMessage({ type: 'REC_BLOB', blob, mimeType: window.mediaRecorder.mimeType || 'video/webm' }, '*');
+                            }
+                        } catch (_) {}
+                        const url = URL.createObjectURL(blob);
+                        const a = document.createElement('a');
+                        a.href = url;
+                        const ext = (window.mediaRecorder.mimeType && window.mediaRecorder.mimeType.includes('mp4')) ? 'mp4' : 'webm';
+                        a.download = `recording-${Date.now()}.${ext}`;
+                        a.click();
+                    };
+                    
+                    window.mediaRecorder.start();
+                }
+            }
+
+            if (e.data.type === 'STOP_REC') {
+                if (window.mediaRecorder && window.mediaRecorder.state !== 'inactive') {
+                    window.mediaRecorder.stop();
+                }
+            }
+        });
+    </script>
+</body>
+</html>
