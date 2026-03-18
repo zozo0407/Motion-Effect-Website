@@ -25,7 +25,9 @@ function getAIConfig() {
     const apiKey = process.env.AI_API_KEY || process.env.OPENAI_API_KEY;
     const baseUrlRaw =
         process.env.AI_BASE_URL ||
+
         process.env.OPENAI_BASE_URL ||
+
         process.env.OPENAI_API_BASE ||
         'https://api.openai.com/v1';
     const model = process.env.AI_MODEL || process.env.OPENAI_MODEL || 'gpt-4o';
@@ -36,10 +38,101 @@ function getAIConfig() {
     };
 }
 
+const PROMPTS_DIR = path.join(__dirname, 'prompts');
+
+async function classifyStyle(prompt, apiKey, baseUrl, model) {
+    const sysPrompt = `You are a router. Classify the following user request for a 3D scene into one of these styles:
+- 'cyberpunk': neon, futuristic, glowing, sci-fi, dark, glitch.
+- 'toon': cartoon, anime, cel-shaded, flat, outline, cute.
+- 'minimalist': clean, simple, geometric, soft, pure color, flat design.
+- 'realistic': PBR, realistic materials, physics, natural light.
+- 'default': anything else, or high-end apple-like abstract aesthetic.
+Reply ONLY with the style name.`;
+
+    try {
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), 15000);
+        const response = await fetch(`${baseUrl}/chat/completions`, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'Authorization': `Bearer ${apiKey}`
+            },
+            body: JSON.stringify({
+                model,
+                messages: [
+                    { role: 'system', content: sysPrompt },
+                    { role: 'user', content: prompt }
+                ],
+                temperature: 0.1,
+                max_tokens: 10
+            }),
+            signal: controller.signal
+        });
+        clearTimeout(timeoutId);
+        
+        const data = await response.json();
+        if (data && data.choices && data.choices[0] && data.choices[0].message) {
+            const style = data.choices[0].message.content.trim().toLowerCase();
+            const validStyles = ['cyberpunk', 'toon', 'minimalist', 'realistic'];
+            for (const s of validStyles) {
+                if (style.includes(s)) return s;
+            }
+        }
+        return 'default';
+    } catch (e) {
+        console.error('Classification failed, falling back to default:', e);
+        return 'default';
+    }
+}
+
+function assemblePrompt(style, userPrompt) {
+    const read = (filename) => {
+        try {
+            return fs.readFileSync(path.join(PROMPTS_DIR, filename), 'utf8');
+        } catch (e) {
+            console.error(`Failed to read prompt file ${filename}:`, e);
+            return '';
+        }
+    };
+
+    const base = read('base-role.md');
+    let styleText = read(`styles/${style}.md`);
+    if (!styleText) styleText = read('styles/default.md'); // fallback
+    const contract = read('engine-contract.md');
+
+    let fullPrompt = `${base}\n\n${styleText}\n\n${contract}`;
+    return fullPrompt.split('{{USER_PROMPT}}').join(userPrompt);
+}
+
 function stripMarkdownCodeFence(text) {
     if (typeof text !== 'string') return '';
     const m = text.match(/^```[a-zA-Z0-9_-]*\s*\n([\s\S]*?)\n```$/);
     return m ? m[1] : text;
+}
+
+function normalizeThreeNamespaceImport(codeText) {
+    const code = typeof codeText === 'string' ? codeText : '';
+    if (/import\s+\*\s+as\s+THREE\s+from\s+['"]three['"]\s*;?/m.test(code)) return code;
+
+    const ns = code.match(/import\s+\*\s+as\s+([A-Za-z_$][\w$]*)\s+from\s+['"]three['"]\s*;?/m);
+    if (ns) {
+        const alias = ns[1];
+        let out = code.replace(ns[0], `import * as THREE from 'three';`);
+        if (alias !== 'THREE') {
+            const re = new RegExp(`\\b${alias}\\b`, 'g');
+            out = out.replace(re, 'THREE');
+        }
+        return out;
+    }
+
+    const firstImport = code.match(/^\s*import[\s\S]*?;\s*$/m);
+    const insert = `import * as THREE from 'three';\n`;
+    if (firstImport) {
+        const idx = firstImport.index || 0;
+        return code.slice(0, idx) + insert + code.slice(idx);
+    }
+    return insert + code;
 }
 
 function extractScriptSceneBlock(scriptSceneText) {
@@ -324,130 +417,115 @@ app.post('/api/generate-effect', async (req, res) => {
         const mockCode = `
 import * as THREE from 'three';
 
-class ScriptScene {
-    constructor(container) {
-        this.container = container;
+export default class EngineEffect {
+    constructor() {
+        this.params = {
+            color: '#00CAE0',
+            intensity: 1.0,
+            speed: 1.0
+        };
+        this.scene = null;
+        this.camera = null;
+        this.renderer = null;
+        this.mesh = null;
+    }
+
+    getUIConfig() {
+        return [
+            { bind: 'color', name: '主色', type: 'color', value: this.params.color },
+            { bind: 'intensity', name: '强度', type: 'range', value: this.params.intensity, min: 0, max: 2, step: 0.01 },
+            { bind: 'speed', name: '速度', type: 'range', value: this.params.speed, min: 0, max: 5, step: 0.01 }
+        ];
+    }
+
+    setParam(key, value) {
+        if (key === 'color' && typeof value === 'string') {
+            this.params.color = value;
+            if (this.mesh && this.mesh.material && this.mesh.material.color) {
+                this.mesh.material.color.set(value);
+            }
+            return;
+        }
+        if ((key === 'intensity' || key === 'speed') && typeof value === 'number' && Number.isFinite(value)) {
+            this.params[key] = value;
+        }
+    }
+
+    onStart(ctx) {
+        const size = ctx && ctx.size ? ctx.size : { width: 1, height: 1, dpr: 1 };
+        const width = Math.max(1, Math.floor(size.width || 1));
+        const height = Math.max(1, Math.floor(size.height || 1));
+        const dpr = Math.max(1, Math.min(2, Number(size.dpr) || 1));
+
         this.scene = new THREE.Scene();
         this.scene.background = new THREE.Color(0x111111);
-        
-        this.camera = new THREE.PerspectiveCamera(60, window.innerWidth / window.innerHeight, 0.1, 1000);
+
+        this.camera = new THREE.PerspectiveCamera(60, width / height, 0.1, 1000);
         this.camera.position.set(0, 0, 5);
-        
-        this.renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
-        this.renderer.setSize(window.innerWidth, window.innerHeight);
-        this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
-        this.container.appendChild(this.renderer.domElement);
-        
-        // Add Lights
+
+        const rendererOptions = { antialias: true, alpha: true };
+        if (ctx && ctx.canvas) rendererOptions.canvas = ctx.canvas;
+        if (ctx && ctx.gl) rendererOptions.context = ctx.gl;
+        this.renderer = new THREE.WebGLRenderer(rendererOptions);
+        this.renderer.setPixelRatio(dpr);
+        this.renderer.setSize(width, height, false);
+
         const ambientLight = new THREE.AmbientLight(0xffffff, 0.5);
         this.scene.add(ambientLight);
         const pointLight = new THREE.PointLight(0xffffff, 1);
         pointLight.position.set(5, 5, 5);
         this.scene.add(pointLight);
 
-        // Add Object (Mock: Rotating Torus)
         const geometry = new THREE.TorusKnotGeometry(1, 0.3, 100, 16);
-        const material = new THREE.MeshStandardMaterial({ color: 0x00CAE0, roughness: 0.1, metalness: 0.8 });
+        const material = new THREE.MeshStandardMaterial({ color: this.params.color, roughness: 0.1, metalness: 0.8 });
         this.mesh = new THREE.Mesh(geometry, material);
         this.scene.add(this.mesh);
-        
-        this.animate = this.animate.bind(this);
-        this.onResize = this.onResize.bind(this);
-        window.addEventListener('resize', this.onResize);
-        
-        this.clock = new THREE.Clock();
-        this.animate();
     }
 
-    onResize() {
-        this.camera.aspect = window.innerWidth / window.innerHeight;
+    onResize(size) {
+        if (!this.camera || !this.renderer) return;
+        const width = Math.max(1, Math.floor(size && size.width ? size.width : 1));
+        const height = Math.max(1, Math.floor(size && size.height ? size.height : 1));
+        const dpr = Math.max(1, Math.min(2, Number(size && size.dpr) || 1));
+        this.camera.aspect = width / height;
         this.camera.updateProjectionMatrix();
-        this.renderer.setSize(window.innerWidth, window.innerHeight);
+        this.renderer.setPixelRatio(dpr);
+        this.renderer.setSize(width, height, false);
     }
 
-    animate() {
-        if (!this.renderer) return;
-        requestAnimationFrame(this.animate);
-        const time = this.clock.getElapsedTime();
-        
+    onUpdate(ctx) {
+        if (!this.renderer || !this.scene || !this.camera) return;
+        const time = (ctx && typeof ctx.time === 'number') ? ctx.time : 0;
         if (this.mesh) {
-            this.mesh.rotation.x = time * 0.5;
-            this.mesh.rotation.y = time * 0.8;
+            const s = Number.isFinite(this.params.speed) ? this.params.speed : 1;
+            this.mesh.rotation.x = time * 0.5 * s;
+            this.mesh.rotation.y = time * 0.8 * s;
         }
-        
         this.renderer.render(this.scene, this.camera);
     }
-    
-    destroy() {
-        window.removeEventListener('resize', this.onResize);
-        if (this.renderer) {
-            this.renderer.dispose();
-            if (this.renderer.domElement.parentNode) {
-                this.renderer.domElement.parentNode.removeChild(this.renderer.domElement);
-            }
+
+    onDestroy() {
+        if (this.mesh) {
+            if (this.mesh.geometry) this.mesh.geometry.dispose();
+            if (this.mesh.material) this.mesh.material.dispose();
         }
+        if (this.renderer) this.renderer.dispose();
+        this.mesh = null;
+        this.scene = null;
+        this.camera = null;
+        this.renderer = null;
     }
 }
-
-export default ScriptScene;
         `;
         return res.json({ code: mockCode });
     }
 
     try {
-        const systemPrompt = `
-You are an expert Creative Coder specializing in Three.js and WebGL.
-Your task is to generate a JavaScript ES Module that exports a class named 'ScriptScene'.
-The class must follow this structure exactly:
+        const style = await classifyStyle(prompt, apiKey, baseUrl, model);
+        const systemPrompt = assemblePrompt(style, prompt);
 
-\`\`\`javascript
-import * as THREE from 'three';
-import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
-// Import other addons from 'three/addons/...' if needed.
-
-class ScriptScene {
-    constructor(container) {
-        this.container = container;
-        this.scene = new THREE.Scene();
-        // Setup camera, renderer, lights, objects...
-        // Use 'this.container.appendChild(this.renderer.domElement)'
-        
-        // Setup Resize Listener
-        this.onResize = this.onResize.bind(this);
-        window.addEventListener('resize', this.onResize);
-        
-        // Setup Animation Loop
-        this.animate = this.animate.bind(this);
-        this.clock = new THREE.Clock();
-        this.animate();
-    }
-
-    onResize() {
-        // Handle resize
-    }
-
-    animate() {
-        if (!this.renderer) return;
-        requestAnimationFrame(this.animate);
-        // Update logic
-        this.renderer.render(this.scene, this.camera);
-    }
-    
-    destroy() {
-        // Cleanup resources and listeners
-    }
-}
-
-export default ScriptScene;
-\`\`\`
-
-Requirements:
-1. Do not include any markdown formatting (like \`\`\`javascript). Just return the raw code.
-2. Ensure the code is valid ES6 module.
-3. The user wants: ${prompt}
-4. Make it visually impressive but performant.
-`;
-
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), 180000);
         const response = await fetch(`${baseUrl}/chat/completions`, {
             method: 'POST',
             headers: {
@@ -461,8 +539,10 @@ Requirements:
                     { role: 'user', content: prompt }
                 ],
                 temperature: 0.7
-            })
+            }),
+            signal: controller.signal
         });
+        clearTimeout(timeoutId);
 
         const raw = await response.text();
         let data = null;
@@ -485,11 +565,16 @@ Requirements:
         }
 
         let generatedCode = stripMarkdownCodeFence(content).trim();
+        generatedCode = normalizeThreeNamespaceImport(generatedCode);
 
         res.json({ code: generatedCode });
 
     } catch (error) {
         console.error('Generate effect failed:', error && error.message ? error.message : 'Unknown error');
+        if (error && (error.name === 'AbortError' || /aborted/i.test(String(error.message || '')))) {
+            res.status(504).json({ error: 'Upstream AI request timed out' });
+            return;
+        }
         res.status(500).json({ error: 'Internal Server Error' });
     }
 });

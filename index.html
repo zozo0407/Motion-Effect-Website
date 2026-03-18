@@ -831,8 +831,8 @@
     </div>
 
     <!-- Creative Console Modal (Wizard Style) -->
-    <div id="creative-console" class="fixed inset-0 z-[200] flex items-center justify-center bg-black/80 backdrop-blur-md hidden opacity-0 transition-opacity duration-300">
-        <div class="w-full max-w-4xl bg-black/90 border border-white/10 rounded-2xl flex overflow-hidden shadow-2xl transform scale-95 transition-transform duration-300 h-[600px]" id="console-panel">
+    <div id="creative-console" class="fixed inset-0 z-[200] flex items-center justify-center bg-black/60 backdrop-blur-sm hidden opacity-0 transition-opacity duration-300">
+        <div class="w-full max-w-4xl bg-black/90 border border-white/30 rounded-2xl flex overflow-hidden shadow-[0_0_50px_rgba(255,255,255,0.15)] transform scale-95 transition-transform duration-300 h-[600px]" id="console-panel">
             
             <!-- Sidebar: Steps -->
             <div id="wizard-sidebar" class="w-64 bg-white/5 border-r border-white/10 p-6 flex flex-col justify-between transition-all duration-300">
@@ -871,89 +871,12 @@
                     <i data-lucide="x" class="w-6 h-6"></i>
                 </button>
 
-                <!-- Step 1: Templates -->
-                <div class="step-content active h-full flex flex-col" id="step-1-content">
-                    <h3 class="text-lg font-bold text-white mb-6">选择基础视觉模板</h3>
-                    <div class="grid grid-cols-2 gap-4 overflow-y-auto custom-scrollbar pr-2">
-                        <!-- AI Card -->
-                        <div class="template-card cursor-pointer border border-capcut-green/50 bg-capcut-green/10 rounded-xl p-4 hover:border-capcut-green hover:bg-capcut-green/20 transition-all group relative overflow-hidden" onclick="selectTemplate('ai-custom')">
-                            <div class="absolute -right-4 -top-4 w-16 h-16 bg-capcut-green blur-2xl opacity-20 group-hover:opacity-40 transition-opacity"></div>
-                            <div class="aspect-video bg-black rounded-lg mb-3 overflow-hidden relative border border-white/10">
-                                <div class="absolute inset-0 bg-gradient-to-br from-purple-600/20 to-blue-600/20 group-hover:scale-110 transition-transform duration-500"></div>
-                                <div class="absolute inset-0 flex items-center justify-center">
-                                    <i data-lucide="bot" class="w-8 h-8 text-capcut-green group-hover:scale-110 transition-transform"></i>
-                                </div>
-                            </div>
-                            <div class="flex items-center gap-2">
-                                <h4 class="text-white font-bold text-sm">AI 创意生成</h4>
-                                <span class="text-[10px] bg-capcut-green text-black px-1.5 py-0.5 rounded font-bold">NEW</span>
-                            </div>
-                            <p class="text-xs text-gray-400 mt-1">输入文字描述，AI 自动生成特效代码。</p>
-                        </div>
-
-                        <div class="template-card cursor-pointer border border-white/10 rounded-xl p-4 hover:border-capcut-green hover:bg-white/5 transition-all group" onclick="selectTemplate('script-scene')">
-                            <div class="aspect-video bg-black rounded-lg mb-3 overflow-hidden relative">
-                                <div class="absolute inset-0 bg-gradient-to-br from-cyan-900/40 to-black group-hover:scale-110 transition-transform duration-500"></div>
-                                <div class="absolute inset-0 flex items-center justify-center">
-                                    <i data-lucide="file-code" class="w-8 h-8 text-white/50 group-hover:text-white transition-colors"></i>
-                                </div>
-                            </div>
-                            <h4 class="text-white font-bold text-sm">ScriptScene 导入</h4>
-                            <p class="text-xs text-gray-500 mt-1">导入 scriptScene.js 的 begin～end 区段并保存为 Demo。</p>
-                        </div>
-
-                        <!-- Template Cards -->
-                        <div class="template-card cursor-pointer border border-white/10 rounded-xl p-4 hover:border-capcut-green hover:bg-white/5 transition-all group" onclick="selectTemplate('particles')">
-                            <div class="aspect-video bg-black rounded-lg mb-3 overflow-hidden relative">
-                                <div class="absolute inset-0 bg-gradient-to-br from-purple-900/50 to-blue-900/50 group-hover:scale-110 transition-transform duration-500"></div>
-                                <div class="absolute inset-0 flex items-center justify-center">
-                                    <i data-lucide="sparkles" class="w-8 h-8 text-white/50 group-hover:text-white transition-colors"></i>
-                                </div>
-                            </div>
-                            <h4 class="text-white font-bold text-sm">粒子风暴</h4>
-                            <p class="text-xs text-gray-500 mt-1">基于物理引擎的流动粒子系统。</p>
-                        </div>
-                        
-                        <div class="template-card cursor-pointer border border-white/10 rounded-xl p-4 hover:border-capcut-green hover:bg-white/5 transition-all group" onclick="selectTemplate('fluid')">
-                            <div class="aspect-video bg-black rounded-lg mb-3 overflow-hidden relative">
-                                <div class="absolute inset-0 bg-gradient-to-br from-green-900/50 to-teal-900/50 group-hover:scale-110 transition-transform duration-500"></div>
-                                <div class="absolute inset-0 flex items-center justify-center">
-                                    <i data-lucide="waves" class="w-8 h-8 text-white/50 group-hover:text-white transition-colors"></i>
-                                </div>
-                            </div>
-                            <h4 class="text-white font-bold text-sm">流体模拟</h4>
-                            <p class="text-xs text-gray-500 mt-1">平滑的液态金属与光照效果。</p>
-                        </div>
-
-                        <div class="template-card cursor-pointer border border-white/10 rounded-xl p-4 hover:border-capcut-green hover:bg-white/5 transition-all group" onclick="selectTemplate('text')">
-                            <div class="aspect-video bg-black rounded-lg mb-3 overflow-hidden relative">
-                                <div class="absolute inset-0 bg-gradient-to-br from-red-900/50 to-orange-900/50 group-hover:scale-110 transition-transform duration-500"></div>
-                                <div class="absolute inset-0 flex items-center justify-center">
-                                    <i data-lucide="type" class="w-8 h-8 text-white/50 group-hover:text-white transition-colors"></i>
-                                </div>
-                            </div>
-                            <h4 class="text-white font-bold text-sm">动态文字</h4>
-                            <p class="text-xs text-gray-500 mt-1">基于 SDF 的高性能文字渲染。</p>
-                        </div>
-                        
-                         <div class="template-card cursor-pointer border border-white/10 rounded-xl p-4 hover:border-capcut-green hover:bg-white/5 transition-all group" onclick="selectTemplate('grid')">
-                            <div class="aspect-video bg-black rounded-lg mb-3 overflow-hidden relative">
-                                <div class="absolute inset-0 bg-gradient-to-br from-gray-800 to-black group-hover:scale-110 transition-transform duration-500"></div>
-                                <div class="absolute inset-0 flex items-center justify-center">
-                                    <i data-lucide="grid" class="w-8 h-8 text-white/50 group-hover:text-white transition-colors"></i>
-                                </div>
-                            </div>
-                            <h4 class="text-white font-bold text-sm">三维网格</h4>
-                            <p class="text-xs text-gray-500 mt-1">复古赛博风格的无限网格。</p>
-                        </div>
-                    </div>
-                </div>
+                <!-- Step 1: Templates (Removed) -->
 
                 <!-- Step 2: Configuration -->
-                <div class="step-content hidden h-full flex-col" id="step-2-content">
+                <div class="step-content h-full flex flex-col" id="step-2-content">
                     <div class="flex items-center gap-4 mb-6">
-                        <button onclick="goToStep(1)" class="text-gray-500 hover:text-white"><i data-lucide="arrow-left" class="w-5 h-5"></i></button>
-                        <h3 class="text-lg font-bold text-white">配置参数</h3>
+                        <h3 class="text-lg font-bold text-white">AI 创意生成</h3>
                     </div>
                     
                     <div class="flex-1 overflow-y-auto custom-scrollbar pr-4 space-y-6" id="template-config-form">
@@ -969,14 +892,52 @@
                 </div>
 
                 <!-- Step 3: Loading / Success -->
-                <div class="step-content hidden h-full flex-col items-center justify-center text-center" id="step-3-content">
-                    <div id="compile-spinner" class="w-16 h-16 border-4 border-white/10 border-t-capcut-green rounded-full animate-spin mb-6"></div>
-                    <h3 id="compile-title" class="text-xl font-bold text-white mb-2">正在编译 Shader...</h3>
-                    <p class="text-gray-500 font-mono text-xs" id="compile-log">Initializing WebGL Context...</p>
-                    <p class="mt-3 text-red-400 font-mono text-xs hidden max-w-[520px] whitespace-pre-wrap break-words" id="compile-error"></p>
-                    <div class="mt-6 hidden" id="compile-actions">
-                        <button onclick="goToStep(2)" class="px-6 py-2 border border-white/10 text-white/80 hover:text-white hover:border-white/20 rounded font-mono text-xs transition-colors">返回修改</button>
+                <div class="step-content hidden absolute inset-0 flex-col items-center justify-center text-center px-12 z-10 bg-black/90 rounded-2xl" id="step-3-content" style="display: none;">
+                    
+                    <!-- Progress Visualization Container -->
+                    <div id="ai-loading-container" class="w-full max-w-md flex flex-col items-center">
+                        <!-- AI Brain / Core Animation -->
+                        <div class="relative w-24 h-24 mb-8">
+                            <div class="absolute inset-0 flex items-center justify-center">
+                                <img src="./参考/logo_loading_sm.b4a15c9f.gif" class="w-12 h-12 object-contain" alt="Loading...">
+                            </div>
+                            <!-- Glowing background aura -->
+                            <div class="absolute inset-0 bg-capcut-green/10 rounded-full blur-xl animate-pulse"></div>
+                        </div>
+
+                        <!-- Title & Percentage -->
+                        <div class="w-full flex justify-between items-end mb-2">
+                            <h3 id="compile-title" class="text-lg font-bold text-white tracking-wider">AI 引擎正在创作</h3>
+                            <span id="ai-progress-text" class="text-capcut-green font-mono font-bold text-xl">0%</span>
+                        </div>
+
+                        <!-- Progress Bar Track -->
+                        <div class="w-full h-1.5 bg-gray-800 rounded-full overflow-hidden mb-4 relative">
+                            <!-- Progress Bar Fill -->
+                            <div id="ai-progress-bar" class="h-full bg-gradient-to-r from-teal-500 to-capcut-green w-0 transition-all duration-300 ease-out shadow-[0_0_10px_rgba(0,202,224,0.8)]"></div>
+                        </div>
+
+                        <!-- Detailed Status Logs -->
+                        <div class="w-full bg-black/50 border border-white/5 rounded-lg p-4 text-left relative overflow-hidden">
+                            <div class="absolute left-0 top-0 bottom-0 w-1 bg-capcut-green/50"></div>
+                            <div class="flex items-center gap-2 mb-1">
+                                <span class="w-1.5 h-1.5 bg-capcut-green rounded-full animate-pulse"></span>
+                                <span class="text-xs text-gray-400 font-mono uppercase">System Status</span>
+                            </div>
+                            <p class="text-white font-mono text-sm h-5 transition-all" id="compile-log">Initializing AI core...</p>
+                        </div>
                     </div>
+
+                    <!-- Error State (Hidden by default) -->
+                    <div id="compile-error-container" class="hidden flex-col items-center">
+                        <i data-lucide="alert-triangle" class="w-12 h-12 text-red-500 mb-4"></i>
+                        <h3 class="text-xl font-bold text-white mb-2">生成中断</h3>
+                        <p class="mt-2 text-red-400 font-mono text-sm max-w-[520px] whitespace-pre-wrap break-words bg-red-900/20 p-4 rounded-lg border border-red-500/20" id="compile-error"></p>
+                        <div class="mt-6" id="compile-actions">
+                            <button onclick="goToStep(2)" class="px-6 py-2 bg-white/10 hover:bg-white/20 text-white rounded font-mono text-sm transition-colors border border-white/20 hover:border-white/40">返回修改提示词</button>
+                        </div>
+                    </div>
+
                 </div>
 
             </div>
@@ -2837,18 +2798,8 @@
             panel.classList.remove('scale-95');
             panel.classList.add('scale-100');
             
-            currentTemplate = null;
-            const sidebar = document.getElementById('wizard-sidebar');
-            const content = document.getElementById('wizard-content');
-            if (sidebar) {
-                sidebar.classList.remove('hidden');
-                sidebar.style.display = '';
-            }
-            if (content) {
-                content.classList.remove('w-full');
-                content.style.width = '';
-            }
-            goToStep(1);
+            // Bypass template selection, go directly to AI Custom
+            selectTemplate('ai-custom');
         }
 
         function closeConsole() {
@@ -3127,34 +3078,79 @@
 
             // Show Content
             document.querySelectorAll('.step-content').forEach(el => el.classList.add('hidden'));
-            document.getElementById(`step-${step}-content`).classList.remove('hidden');
+            const targetContent = document.getElementById(`step-${step}-content`);
+            if (targetContent) {
+                targetContent.classList.remove('hidden');
+                // For step 3, ensure it uses flex layout when visible
+                if (step === 3) {
+                    targetContent.style.display = 'flex';
+                }
+            }
         };
 
         window.generateDemo = async () => {
             goToStep(3);
             const logs = document.getElementById('compile-log');
-            const spinner = document.getElementById('compile-spinner');
+            const loadingContainer = document.getElementById('ai-loading-container');
+            const progressBar = document.getElementById('ai-progress-bar');
+            const progressText = document.getElementById('ai-progress-text');
             const title = document.getElementById('compile-title');
+            const errorContainer = document.getElementById('compile-error-container');
             const errorEl = document.getElementById('compile-error');
-            const actionsEl = document.getElementById('compile-actions');
 
-            if (spinner) spinner.classList.remove('hidden');
-            if (title) title.textContent = '正在编译 Shader...';
-            if (errorEl) {
-                errorEl.textContent = '';
-                errorEl.classList.add('hidden');
-            }
-            if (actionsEl) actionsEl.classList.add('hidden');
+            // Reset UI State
+            if (loadingContainer) loadingContainer.classList.remove('hidden');
+            if (errorContainer) errorContainer.classList.add('hidden');
+            if (progressBar) progressBar.style.width = '0%';
+            if (progressText) progressText.innerText = '0%';
+            if (title) title.textContent = 'AI 引擎正在创作';
+            if (logs) logs.innerText = 'Initializing AI core...';
+
+            let progress = 0;
+            let progressInterval;
+            
+            // Start simulated progress
+            const startSimulatedProgress = () => {
+                progressInterval = setInterval(() => {
+                    if (progress < 90) {
+                        // Slow down as it gets higher
+                        const increment = progress < 30 ? Math.random() * 5 : 
+                                          progress < 60 ? Math.random() * 2 : 
+                                          Math.random() * 0.5;
+                        progress += increment;
+                        if (progress > 90) progress = 90;
+                        
+                        if (progressBar) progressBar.style.width = `${progress}%`;
+                        if (progressText) progressText.innerText = `${Math.floor(progress)}%`;
+
+                        // Update status text based on progress
+                        if (logs) {
+                            if (progress < 20) logs.innerText = '> 正在解析提示词语义并提取关键特征...';
+                            else if (progress < 40) logs.innerText = '> 正在构建基础三维场景拓扑结构...';
+                            else if (progress < 70) logs.innerText = '> AI 核心正在编写并优化 WebGL 着色器代码...';
+                            else if (progress < 85) logs.innerText = '> 正在合成 PBR 材质与全局光照参数...';
+                            else logs.innerText = '> 正在校验代码并准备注入 UnifiedRenderer 引擎...';
+                        }
+                    }
+                }, 200);
+            };
+
+            const finishProgress = () => {
+                clearInterval(progressInterval);
+                if (progressBar) progressBar.style.width = '100%';
+                if (progressText) progressText.innerText = '100%';
+                if (title) title.textContent = '生成完成！';
+                if (logs) logs.innerText = '> 编译成功，准备启动渲染...';
+            };
 
             const showCompileError = (message) => {
-                if (spinner) spinner.classList.add('hidden');
-                if (title) title.textContent = '生成失败';
-                if (logs) logs.innerText = 'Generation failed.';
-                if (errorEl) {
-                    errorEl.textContent = message || '未知错误';
-                    errorEl.classList.remove('hidden');
+                clearInterval(progressInterval);
+                if (loadingContainer) loadingContainer.classList.add('hidden');
+                if (errorContainer) {
+                    errorContainer.classList.remove('hidden');
+                    errorContainer.classList.add('flex');
                 }
-                if (actionsEl) actionsEl.classList.remove('hidden');
+                if (errorEl) errorEl.textContent = message || '未知错误';
             };
             
             // Collect Data
@@ -3162,126 +3158,83 @@
             const data = {};
             config.fields.forEach(f => {
                 const input = document.getElementById(`input-${f.id}`);
-                data[f.id] = input.value;
+                if (input) data[f.id] = input.value;
             });
 
             let htmlContent;
 
-            if (currentTemplate === 'script-scene') {
-                try {
-                    logs.innerText = "Importing ScriptScene...";
-                    const payload = {
-                        title: data.title,
-                        enTitle: 'ScriptScene Import',
-                        tech: 'Three.js / ScriptScene',
-                        keywords: 'imported,scriptscene',
-                        sourceContent: data.sourceContent || ''
-                    };
-                    if (!payload.sourceContent || !payload.sourceContent.trim()) {
-                        throw new Error('请先上传脚本文件');
-                    }
-                    if (!/\/\/===begin===|\/\/===begin_pp===/.test(payload.sourceContent)) {
-                        throw new Error('未识别到可导入区段：需要包含 //===begin===...//===end===（或至少 //===begin_pp===...//===end_pp===）');
-                    }
-                    const res = await fetch(`${API_BASE}/import-script-scene`, {
-                        method: 'POST',
-                        headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify(payload)
-                    });
-                    const json = await res.json().catch(() => null);
-                    if (!res.ok) {
-                        const msg = json && json.error ? json.error : `HTTP ${res.status}`;
-                        throw new Error(msg);
-                    }
-                    if (!json || !json.demo) throw new Error('服务返回缺少 demo 字段');
-                    const demo = json.demo;
-                    DEMO_LIST.unshift(demo);
-                    renderDemoGrid();
-                    closeConsole();
-                    setTimeout(() => {
-                        openLab(demo.url, demo.title, demo.tech, true);
-                    }, 200);
-                } catch (e) {
-                    showCompileError(e && e.message ? e.message : String(e));
-                }
-                return;
-            }
+            startSimulatedProgress();
 
             if (currentTemplate === 'ai-custom') {
                 try {
-                    logs.innerText = "Requesting /api/generate-effect ...";
+                    const __ctrl = new AbortController();
+                    const __timeoutMs = 180000;
+                    const __timeoutId = setTimeout(() => {
+                        __ctrl.abort();
+                    }, __timeoutMs);
                     const res = await fetch(`${API_BASE}/generate-effect`, {
                         method: 'POST',
                         headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({ 
-                            prompt: data.prompt
-                        })
+                        body: JSON.stringify({ prompt: data.prompt }),
+                        signal: __ctrl.signal
                     });
+                    clearTimeout(__timeoutId);
                     
                     const raw = await res.text();
                     let json = null;
-                    try {
-                        json = JSON.parse(raw);
-                    } catch (_) {
-                        json = null;
-                    }
+                    try { json = JSON.parse(raw); } catch (_) { json = null; }
 
                     if (!res.ok) {
                         const msg = (json && json.error) ? json.error : (raw && raw.trim() ? raw.trim() : `HTTP ${res.status}`);
                         throw new Error(msg);
                     }
 
-                    if (!json || typeof json !== 'object') {
-                        throw new Error('服务返回非 JSON 响应');
-                    }
+                    if (!json || typeof json !== 'object') throw new Error('服务返回非 JSON 响应');
                     if (json.error) throw new Error(json.error);
-                    if (!json.code || typeof json.code !== 'string') {
-                        throw new Error('服务返回缺少 code 字段');
-                    }
+                    if (!json.code || typeof json.code !== 'string') throw new Error('服务返回缺少 code 字段');
 
-                    logs.innerText = "Compiling Scene...";
                     htmlContent = generateAIHTML(json.code);
+                    finishProgress();
                     
                 } catch (e) {
-                    showCompileError(e && e.message ? e.message : String(e));
+                    const isAbort = e && (e.name === 'AbortError' || /aborted/i.test(String(e.message || '')));
+                    showCompileError(isAbort ? '生成超时，请重试' : (e && e.message ? e.message : String(e)));
                     return;
                 }
             } else {
-                const steps = ["Parsing Configuration...", "Generating Shader Graph...", "Compiling WebGL Program...", "Optimizing Assets...", "Finalizing Build..."];
-                for (let i = 0; i < steps.length; i++) {
-                    logs.innerText = steps[i];
-                    await new Promise(r => setTimeout(r, 600)); // Fake delay
-                }
-                htmlContent = generateTemplateHTML(currentTemplate, data);
+                // Fallback for old templates if they somehow get called
+                clearInterval(progressInterval);
+                showCompileError("This template mode is deprecated.");
+                return;
             }
 
-            // Create Blob
-            const blob = new Blob([htmlContent], { type: 'text/html' });
-            const url = URL.createObjectURL(blob);
-
-            // Add to Grid
-            const newId = 'GEN-' + Math.floor(Math.random() * 1000);
-            const newDemo = {
-                id: newId,
-                title: config.name + ' (Generated)',
-                enTitle: 'User Created Demo',
-                tech: 'UnifiedRenderer / AI',
-                category: '测试',
-                subcategory: '生成作品',
-                url: url,
-                color: 'text-capcut-green',
-                isOriginal: true,
-                icon: '<path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5" stroke="currentColor" fill="none" stroke-width="2"/>'
-            };
-            
-            DEMO_LIST.unshift(newDemo);
-            renderDemoGrid();
-            
-            // Open it
-            closeConsole();
+            // Create Blob and open
             setTimeout(() => {
-                openLab(url, newDemo.title, newDemo.tech, true);
-            }, 500);
+                const blob = new Blob([htmlContent], { type: 'text/html' });
+                const url = URL.createObjectURL(blob);
+
+                const newId = 'GEN-' + Math.floor(Math.random() * 1000);
+                const newDemo = {
+                    id: newId,
+                    title: 'AI 生成作品',
+                    enTitle: 'AI Generated Demo',
+                    tech: 'UnifiedRenderer / AI',
+                    category: '测试',
+                    subcategory: '生成作品',
+                    url: url,
+                    color: 'text-capcut-green',
+                    isOriginal: true,
+                    icon: '<path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5" stroke="currentColor" fill="none" stroke-width="2"/>'
+                };
+                
+                DEMO_LIST.unshift(newDemo);
+                renderDemoGrid();
+                
+                closeConsole();
+                setTimeout(() => {
+                    openLab(url, newDemo.title, newDemo.tech, true);
+                }, 500);
+            }, 800); // Small delay after 100% before closing modal
         };
 
         // --- Template Generator Engine ---
@@ -3658,8 +3611,26 @@
              const threePath = origin + basePath + 'my-motion-portfolio/public/js/libs/three/three.module.js';
              const threeAddonsPath = origin + basePath + 'my-motion-portfolio/public/js/libs/three/addons/';
              
-             // Remove 'export default ...' to run inline
-             const cleanedCode = code.replace(/export\s+default\s+\w+\s*;?/, '');
+             const safeCode = (typeof code === 'string' ? code : '').replace(/<\/script>/gi, '<\\/script>');
+             let normalizedCode = safeCode;
+             if (!/import\s+\*\s+as\s+THREE\s+from\s+['"]three['"]\s*;?/m.test(normalizedCode)) {
+                 const ns = normalizedCode.match(/import\s+\*\s+as\s+([A-Za-z_$][\w$]*)\s+from\s+['"]three['"]\s*;?/m);
+                 if (ns) {
+                     const alias = ns[1];
+                     if (alias && alias !== 'THREE') {
+                         normalizedCode = normalizedCode.replace(ns[0], `${ns[0]}\nconst THREE = ${alias};`);
+                     }
+                 } else {
+                     const firstImport = normalizedCode.match(/^\s*import[\s\S]*?;\s*$/m);
+                     const insert = `import * as THREE from 'three';\n`;
+                     if (firstImport) {
+                         const idx = firstImport.index || 0;
+                         normalizedCode = normalizedCode.slice(0, idx) + insert + normalizedCode.slice(idx);
+                     } else {
+                         normalizedCode = insert + normalizedCode;
+                     }
+                 }
+             }
              
              return `<!DOCTYPE html>
 <html lang="en">
@@ -3680,14 +3651,152 @@
 </head>
 <body>
     <script type="module">
-        ${cleanedCode}
-        
-        // Auto-run AI Code
-        if (typeof ScriptScene !== 'undefined') {
-            new ScriptScene(document.body);
-        } else {
-            console.error("ScriptScene class not found. Please check the generated code.");
+        const __source = ${JSON.stringify(normalizedCode)};
+        const __blob = new Blob([__source], { type: 'application/javascript' });
+        const __url = URL.createObjectURL(__blob);
+
+        const __showError = (err) => {
+            const msg = (err && err.stack) ? err.stack : String(err || 'Unknown error');
+            const el = document.createElement('div');
+            el.style.position = 'fixed';
+            el.style.left = '0';
+            el.style.top = '0';
+            el.style.right = '0';
+            el.style.bottom = '0';
+            el.style.background = 'rgba(0,0,0,0.92)';
+            el.style.color = '#ff6b6b';
+            el.style.fontFamily = 'monospace';
+            el.style.fontSize = '12px';
+            el.style.padding = '20px';
+            el.style.whiteSpace = 'pre-wrap';
+            el.style.overflow = 'auto';
+            el.textContent = msg;
+            document.body.appendChild(el);
+        };
+
+        let __mod = null;
+        try {
+            __mod = await import(__url);
+        } catch (e) {
+            __showError(e);
+            throw e;
         }
+
+        const EngineEffect = __mod && (__mod.default || __mod.EngineEffect);
+        if (!EngineEffect) {
+            const e = new Error('EngineEffect not found. The generated module must export default class EngineEffect.');
+            __showError(e);
+            throw e;
+        }
+
+        const __container = document.body;
+        __container.style.margin = '0';
+
+        const __canvas = document.createElement('canvas');
+        __canvas.style.width = '100%';
+        __canvas.style.height = '100%';
+        __canvas.style.display = 'block';
+        __container.appendChild(__canvas);
+
+        const __getSize = () => {
+            const width = Math.max(1, Math.floor(window.innerWidth || 1));
+            const height = Math.max(1, Math.floor(window.innerHeight || 1));
+            const dpr = Math.max(1, Math.min(2, window.devicePixelRatio || 1));
+            return { width, height, dpr };
+        };
+
+        let __started = false;
+        let __effect = null;
+        try {
+            __effect = new EngineEffect();
+        } catch (e) {
+            __showError(e);
+            throw e;
+        }
+
+        const __resize = () => {
+            const size = __getSize();
+            __canvas.width = Math.max(1, Math.floor(size.width * size.dpr));
+            __canvas.height = Math.max(1, Math.floor(size.height * size.dpr));
+            if (__started && typeof __effect.onResize === 'function') {
+                __effect.onResize(size);
+            }
+        };
+
+        try {
+            __resize();
+            if (typeof __effect.onStart === 'function') {
+                __effect.onStart({ container: __container, canvas: __canvas, gl: null, size: __getSize() });
+            }
+            __started = true;
+            __resize();
+        } catch (e) {
+            __showError(e);
+            throw e;
+        }
+
+        window.addEventListener('resize', () => __resize());
+
+        window.addEventListener('message', (e) => {
+            const d = e.data;
+            if (!d || !d.type) return;
+
+            if (d.type === 'HANDSHAKE') {
+                let cfg = [];
+                try {
+                    cfg = (typeof __effect.getUIConfig === 'function') ? (__effect.getUIConfig() || []) : [];
+                } catch (_) {
+                    cfg = [];
+                }
+                parent.postMessage({ type: 'UI_CONFIG', config: cfg }, '*');
+                return;
+            }
+
+            if (d.type === 'UPDATE_PARAM') {
+                if (typeof __effect.setParam === 'function') {
+                    try {
+                        __effect.setParam(d.key, d.value);
+                    } catch (_) {}
+                }
+                return;
+            }
+
+            if (d.type === 'EXPORT_SCRIPT_SCENE' || d.type === 'EXPORT_ENGINE_EFFECT') {
+                const blob = new Blob([__source], { type: 'application/javascript' });
+                const url = URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.href = url;
+                a.download = 'engine-effect.js';
+                document.body.appendChild(a);
+                a.click();
+                document.body.removeChild(a);
+                URL.revokeObjectURL(url);
+            }
+        });
+
+        let __raf = 0;
+        let __last = performance.now();
+        const __frame = (now) => {
+            __raf = requestAnimationFrame(__frame);
+            const deltaTime = Math.max(0, (now - __last) / 1000);
+            __last = now;
+            const time = now / 1000;
+            try {
+                if (typeof __effect.onUpdate === 'function') {
+                    __effect.onUpdate({ time, deltaTime, size: __getSize() });
+                }
+            } catch (e) {
+                cancelAnimationFrame(__raf);
+                __showError(e);
+            }
+        };
+        __raf = requestAnimationFrame(__frame);
+
+        window.addEventListener('beforeunload', () => {
+            try { cancelAnimationFrame(__raf); } catch (_) {}
+            try { if (typeof __effect.onDestroy === 'function') __effect.onDestroy(); } catch (_) {}
+            try { URL.revokeObjectURL(__url); } catch (_) {}
+        });
     <\/script>
 </body>
 </html>`;
