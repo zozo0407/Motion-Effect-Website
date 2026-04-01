@@ -1,4 +1,4 @@
-# 剪映 - 动态影像实验室 | CapCut Motion Graphics Lab
+# 影像动态特效的coding平台 | Motion Graphics Coding Platform
 
 > 一个探索逻辑与影像边界的创意编程实验展示平台。
 > Exploration of visual boundaries through creative coding and generative art.
@@ -70,18 +70,53 @@ npm run build
 
 ## 📂 目录结构
 
+### 模块结构（2026 重构）
+
+- `index.html`：站点 HTML 壳层；加载 `/src/main.js`；保留 Background Model Preloader 等少量脚本。
+- `src/main.js`：入口装配层（import + 初始化顺序 + `window.*` 绑定，兼容 HTML `onclick`）。
+- `src/site/*`：按功能域拆分的模块（核心逻辑都在这里）。
+  - `hero.js`：Hero 背景渲染（`initHero`）。
+  - `lab.js`：Lab iframe/Workbench/postMessage（`openLab/updateDemoParam/...`）。
+  - `demos.js`：Demo 列表/网格/过滤/搜索 + Studio 操作（拖拽/删除/移动等）。
+  - `boot.js`：启动序列（`runBootSequence`）。
+  - `templates.js`：生成器（`generateTemplateHTML/generateAIHTML`）。
+  - `ui.js`：通用小交互（翻卡/文字扰动等）。
+  - `ai-chat.js`：AI Chat 语义调参（`sendAIChat`）。
+  - `wizard.js`：创意控制台 Wizard（生成/步骤流转等）。
+- `my-motion-portfolio/public/*`：运行时静态资源与 Demo 文件（数据清单、demos、UnifiedRenderer、three libs、sample 资源等）。
+- `tools/*`：项目整理与本地创作工具链（`creator/`、`build/`、`archive/`）。
+- `docs/ai/*`：创意编程/UnifiedRenderer 移植提示词与规范。
+- `docs/effects/*`：特效交付模板与技术交接文档。
+
 ```
 cupcut-website/
-├── index.html              # 主页入口 (包含 Hero, Grid, UI 逻辑)
-├── package.json            # 项目配置与脚本
-├── vite.config.js          # Vite 构建配置
-├── server.js               # 本地开发用简单服务器 (可选)
-├── my-motion-portfolio/    # 核心资源目录
+├── index.html                    # 主页 HTML 壳层（加载 /src/main.js）
+├── src/                          # 主站逻辑
+│   ├── main.js                   # 入口装配层（init + window.* 绑定）
+│   └── site/                     # 功能域模块
+│       ├── hero.js               # Hero 背景（initHero）
+│       ├── lab.js                # Lab iframe/控制面板/录制截图
+│       ├── demos.js              # Demo 列表/网格/过滤/搜索 + Studio 操作
+│       ├── boot.js               # 启动序列
+│       ├── templates.js          # 模板/AI 生成 HTML
+│       ├── ui.js                 # 小交互（翻卡/文字扰动）
+│       ├── ai-chat.js            # AI Chat 语义调参
+│       └── wizard.js             # Wizard 创意控制台
+├── my-motion-portfolio/          # 运行时资源目录
 │   └── public/
-│       ├── demos/          # 各个独立特效 Demo 的 HTML 文件
-│       ├── js/             # 通用 JS 库 (UnifiedRenderer.js 等)
-│       └── data/           # 项目元数据 (demos.json)
-└── video-intro/            # 视频介绍相关资源 (Remotion 项目)
+│       ├── data/                 # Demo 元数据清单（demos.core.json / demos.json）
+│       ├── demos/                # Demo HTML 与 lab.html
+│       ├── js/                   # UnifiedRenderer + three libs + 通用模块
+│       └── sample/               # Demo 资源样本（图片/音视频等）
+├── tools/                        # 本地工具链
+│   ├── creator/                  # 统一入口：npm run creator
+│   ├── build/                    # 构建瘦身：只复制 Core 必需 public 子集
+│   └── archive/                  # 迁出/归档脚本（可选）
+├── server.js                     # Creator/Studio API（/api/demos 等）
+├── scripts/                      # 辅助脚本（如 quick-preview）
+├── docs/                         # 文档与整理设计/计划
+├── vite.config.js                # Vite 构建配置
+└── package.json                  # 项目脚本与依赖
 ```
 
 ## 📝 许可证
