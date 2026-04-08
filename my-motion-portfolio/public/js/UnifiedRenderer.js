@@ -386,7 +386,7 @@ export class UnifiedRenderer {
         runBtn.onmouseout = () => runBtn.style.boxShadow = '0 0 15px rgba(0, 202, 224, 0.3)';
         const exportBtn = document.createElement('button');
         exportBtn.id = 'unified-export-btn';
-        exportBtn.innerText = '📤 导出至剪映 / EXPORT';
+        exportBtn.innerText = '⬇︎ 导出 game.js / EXPORT';
         exportBtn.style.cssText = `
             background: rgba(122, 66, 244, 0.2); color: #b388ff; border: 1px solid rgba(122, 66, 244, 0.5); 
             padding: 6px 16px; cursor: pointer; font-weight: bold; border-radius: 4px; font-family: sans-serif; font-size: 12px;
@@ -866,7 +866,22 @@ export class UnifiedRenderer {
     }
 
     _exportToCapCut() {
-        this._exportToScriptScene();
+        this._exportToGameJS();
+    }
+
+    async _exportToGameJS() {
+        const code = this.monacoInstance ? this.monacoInstance.getValue() : await this._fetchSourceCode();
+        const rawPrefix = (window.localStorage && localStorage.getItem('exportFilePrefix')) ? localStorage.getItem('exportFilePrefix') : '';
+        const prefix = (rawPrefix || '').trim().replace(/[^a-zA-Z0-9._-]+/g, '-').replace(/-+/g, '-').replace(/^-+|-+$/g, '').slice(0, 40);
+        const blob = new Blob([code], { type: 'application/javascript' });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = prefix ? `${prefix}-game.js` : 'game.js';
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        URL.revokeObjectURL(url);
     }
 
     async _setupSplat() {

@@ -848,6 +848,18 @@
             if (!data) return;
 
             if (data.type === 'HANDSHAKE') sendConfig();
+            if (data.type === 'REQUEST_GAME_JS_SOURCE') {
+                fetch(window.location.href, { cache: 'no-store' })
+                    .then((r) => r.text())
+                    .then((html) => {
+                        const m = html.match(/<script type="module">([\s\S]*?)<\/script>/);
+                        const code = m && m[1] ? m[1].trim() : '';
+                        window.parent && window.parent.postMessage({ type: 'GAME_JS_SOURCE', code, filename: 'game.js' }, '*');
+                    })
+                    .catch(() => {
+                        window.parent && window.parent.postMessage({ type: 'GAME_JS_SOURCE', code: '', filename: 'game.js' }, '*');
+                    });
+            }
 
             if (data.type === 'UPDATE_PARAM') {
                 if (data.key === 'uIntensity') uniforms.uIntensity.value = data.value;

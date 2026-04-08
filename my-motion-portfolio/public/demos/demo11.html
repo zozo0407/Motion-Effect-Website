@@ -591,6 +591,19 @@
         // --- Universal Recorder & Screenshot Adapter ---
         window.addEventListener('message', (e) => {
             if (!e.data) return;
+            if (e.data.type === 'REQUEST_GAME_JS_SOURCE') {
+                fetch(window.location.href, { cache: 'no-store' })
+                    .then((r) => r.text())
+                    .then((html) => {
+                        const m = html.match(/<script type="module">([\s\S]*?)<\/script>/);
+                        const code = m && m[1] ? m[1].trim() : '';
+                        window.parent && window.parent.postMessage({ type: 'GAME_JS_SOURCE', code, filename: 'game.js' }, '*');
+                    })
+                    .catch(() => {
+                        window.parent && window.parent.postMessage({ type: 'GAME_JS_SOURCE', code: '', filename: 'game.js' }, '*');
+                    });
+                return;
+            }
             
             // 1. Screenshot
             if (e.data.type === 'SAVE_IMAGE') {

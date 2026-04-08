@@ -12,6 +12,14 @@
         /* Hidden video element for processing */
         #input-video { display: none; }
     </style>
+    <script type="importmap">
+        {
+            "imports": {
+                "three": "../js/libs/three/three.module.js",
+                "three/addons/": "../js/libs/three/addons/"
+            }
+        }
+    </script>
 </head>
 <body>
     <div id="canvas-container">
@@ -26,13 +34,12 @@
 
         // --- Configuration ---
         const CONFIG = {
-            sensitivity: 20,    // Pixel difference threshold (0-255)
+            sensitivity: 60,    // Pixel difference threshold (0-255)
             minBlobSize: 100,   // Minimum pixels to count as a blob
             gridSize: 10,       // Downsampling grid for detection (Performance)
             learningRate: 0.1,  // Background adaptation rate
-            style: 'Basic',     // Basic, Area, Filter, Invert
-            showTrails: true,
-            trailLength: 15,
+            persistFrames: 10,  // How long a blob survives without motion (frames)
+            smoothing: 0.8,    // Smoothing factor for blob movement (0-1)
             color: '#ffffff'    // Main Theme Color (Default White for Modern look)
         };
 
@@ -56,15 +63,15 @@
 
         // --- UI Communication ---
         const UI_CONFIG = [
-            { name: '灵敏度', value: 20, min: 5, max: 100, bind: 'sensitivity' },
+            { name: '灵敏度', value: 60, min: 5, max: 100, bind: 'sensitivity' },
             { name: '最小斑点', value: 100, min: 10, max: 500, bind: 'minBlobSize' },
-            { name: '视觉风格', value: 0, type: 'select', options: ['Basic', 'Area', 'Filter', 'Invert'], bind: 'style' },
-            { name: '显示拖尾', value: true, type: 'checkbox', bind: 'showTrails' },
+            { name: '存在时长', value: 10, min: 1, max: 180, bind: 'persistFrames' },
+            { name: '平滑度', value: 0.8, min: 0.01, max: 1.0, step: 0.01, bind: 'smoothing' },
             { name: '主题色', value: '#ffffff', type: 'color', bind: 'color' }
         ];
 
         const SOURCE_OPTIONS = [
-            { name: '示例视频 1', value: 'v1', type: 'video', path: '../sample/sample1.mp4' },
+            { name: '示例视频 1', value: 'v1', type: 'video', path: '../sample/sample-joker.mp4' },
             { name: '示例视频 2', value: 'v2', type: 'video', path: '../sample/sample2.mp4' },
             { name: '🔴 实时摄像头', value: 'camera', type: 'camera' }
         ];
@@ -73,7 +80,7 @@
             type: 'custom',
             init: (renderer) => {
                 // Initialize
-                loadSource({ type: 'video', path: '../sample/sample1.mp4' });
+                loadSource({ type: 'video', path: '../sample/sample-joker.mp4' });
                 resize();
                 loop();
 
@@ -93,13 +100,9 @@
                 renderer.onParamChange = (key, value) => {
                     if (key === 'sensitivity') CONFIG.sensitivity = value;
                     if (key === 'minBlobSize') CONFIG.minBlobSize = value;
-                    if (key === 'showTrails') CONFIG.showTrails = value;
+                    if (key === 'persistFrames') CONFIG.persistFrames = value;
+                    if (key === 'smoothing') CONFIG.smoothing = value;
                     if (key === 'color') CONFIG.color = value;
-                    if (key === 'style') {
-                        const styles = ['Basic', 'Area', 'Filter', 'Invert'];
-                        if (typeof value === 'number') CONFIG.style = styles[value];
-                        else CONFIG.style = value;
-                    }
                     // Handle Source Change via "source" key (sent by index.html dropdown)
                     if (key === 'source') {
                         const src = SOURCE_OPTIONS.find(s => s.value === value);
@@ -109,7 +112,7 @@
 
                 // Handle Resize
                 renderer.onResize = (w, h) => {
-                    resize();
+                    resize(w, h);
                 };
 
                 // Handle Cleanup
@@ -136,6 +139,18 @@
                     if (data.type === 'LOAD_SOURCE') {
                         loadSource(data.source);
                     }
+                    if (data.type === 'REQUEST_GAME_JS_SOURCE') {
+                        fetch(window.location.href, { cache: 'no-store' })
+                            .then((r) => r.text())
+                            .then((html) => {
+                                const m = html.match(/<script type="module">([\s\S]*?)<\/script>/);
+                                const code = m && m[1] ? m[1].trim() : '';
+                                window.parent && window.parent.postMessage({ type: 'GAME_JS_SOURCE', code, filename: 'game.js' }, '*');
+                            })
+                            .catch(() => {
+                                window.parent && window.parent.postMessage({ type: 'GAME_JS_SOURCE', code: '', filename: 'game.js' }, '*');
+                            });
+                    }
                     if (data.type === 'SAVE_IMAGE') {
                          const link = document.createElement('a');
                          link.download = 'baby-track.png';
@@ -154,9 +169,9 @@
             }
         });
 
-        function resize() {
-            canvas.width = window.innerWidth;
-            canvas.height = window.innerHeight;
+        function resize(w, h) {
+            canvas.width = w || window.innerWidth;
+            canvas.height = h || window.innerHeight;
             // Processing resolution is fixed/scaled for performance, but display is full
         }
 
@@ -181,16 +196,23 @@
             }
         }
 
+        // --- Helper ---
+        const lerp = (a, b, t) => a + (b - a) * t;
+
         // --- Core Tracking Engine ---
         function processFrame() {
             if (!isVideoReady || video.videoWidth === 0) return;
 
-            // Set internal resolution
-            if (width !== video.videoWidth / 2) { // Downscale 50% for speed
-                width = 320; // Fixed low res for processing
-                height = 320 * (video.videoHeight / video.videoWidth);
+            // Set internal resolution dynamically based on actual video aspect ratio
+            const targetWidth = 320; // Fixed low res for processing
+            const targetHeight = Math.round(targetWidth * (video.videoHeight / video.videoWidth));
+
+            if (width !== targetWidth || height !== targetHeight || procCanvas.width !== targetWidth) { 
+                width = targetWidth;
+                height = targetHeight;
                 procCanvas.width = width;
                 procCanvas.height = height;
+                previousFrameData = null; // Reset background to prevent Array.set size mismatch
             }
 
             // Draw current frame
@@ -296,48 +318,59 @@
             // Match by distance
             const trackedBlobs = [];
             
-            for (let cb of currentBlobs) {
-                // Filter small noise
-                if (cb.w * cb.h < CONFIG.minBlobSize) continue;
-
-                const cx = cb.x + cb.w/2;
-                const cy = cb.y + cb.h/2;
-                
+            // Step 1: Try to match existing blobs with current blobs
+            for (let pb of blobs) {
                 let match = null;
                 let minDist = 100; // Tracking radius
+                let matchIdx = -1;
                 
-                for (let pb of blobs) {
-                    const pcx = pb.x + pb.w/2;
-                    const pcy = pb.y + pb.h/2;
+                const pcx = pb.x + pb.w/2;
+                const pcy = pb.y + pb.h/2;
+
+                for (let i = 0; i < currentBlobs.length; i++) {
+                    let cb = currentBlobs[i];
+                    if (cb.w * cb.h < CONFIG.minBlobSize) continue;
+                    
+                    const cx = cb.x + cb.w/2;
+                    const cy = cb.y + cb.h/2;
                     const dist = Math.hypot(cx - pcx, cy - pcy);
                     
                     if (dist < minDist) {
                         minDist = dist;
-                        match = pb;
+                        match = cb;
+                        matchIdx = i;
                     }
                 }
                 
                 if (match) {
-                    // Update existing
-                    match.x = cb.x; match.y = cb.y;
-                    match.w = cb.w; match.h = cb.h;
-                    match.age++;
-                    match.lost = 0;
-                    // Add trail
-                    if (CONFIG.showTrails) {
-                        match.trail.push({x: cx, y: cy});
-                        if (match.trail.length > CONFIG.trailLength) match.trail.shift();
-                    }
-                    trackedBlobs.push(match);
+                    // Update existing smoothly using lerp
+                    pb.x = lerp(pb.x, match.x, CONFIG.smoothing);
+                    pb.y = lerp(pb.y, match.y, CONFIG.smoothing);
+                    pb.w = lerp(pb.w, match.w, CONFIG.smoothing);
+                    pb.h = lerp(pb.h, match.h, CONFIG.smoothing);
+                    pb.age++;
+                    pb.lost = 0;
+                    trackedBlobs.push(pb);
+                    // Remove from currentBlobs so it's not matched twice
+                    currentBlobs.splice(matchIdx, 1);
                 } else {
-                    // New blob
-                    trackedBlobs.push({
-                        id: nextBlobId++,
-                        x: cb.x, y: cb.y, w: cb.w, h: cb.h,
-                        age: 0, lost: 0,
-                        trail: [{x: cx, y: cy}]
-                    });
+                    // Not matched, increment lost counter
+                    pb.lost++;
+                    if (pb.lost < CONFIG.persistFrames) {
+                        trackedBlobs.push(pb);
+                    }
                 }
+            }
+            
+            // Step 2: Add remaining unmatched current blobs as new
+            for (let cb of currentBlobs) {
+                if (cb.w * cb.h < CONFIG.minBlobSize) continue;
+                
+                trackedBlobs.push({
+                    id: nextBlobId++,
+                    x: cb.x, y: cb.y, w: cb.w, h: cb.h,
+                    age: 0, lost: 0
+                });
             }
             
             blobs = trackedBlobs;
@@ -345,9 +378,10 @@
 
         // --- Rendering ---
         function render() {
+            if (!isVideoReady || video.videoWidth === 0) return;
             // Draw Background
-            // Scale to fit window (Contain)
-            const aspect = width / height;
+            // Scale to fit window (Contain), using ORIGINAL video aspect ratio
+            const aspect = video.videoWidth / video.videoHeight;
             const screenAspect = canvas.width / canvas.height;
             
             let drawW, drawH, offX, offY;
@@ -366,43 +400,86 @@
 
             ctx.clearRect(0, 0, canvas.width, canvas.height);
             
-            // Draw Video Feed
-            ctx.save();
-            if (CONFIG.style === 'Filter') {
-                // For Filter, we want to see the binary mask (White on Black)
-                ctx.filter = 'grayscale(100%) contrast(500%) brightness(0.8)';
-            } else if (CONFIG.style === 'Invert') {
-                ctx.filter = 'invert(100%) grayscale(100%)';
-            } else {
-                // Basic / Area: Make it grayscale for the "Modern Black & White" feel
-                ctx.filter = 'grayscale(100%) contrast(1.1)'; 
-            }
-            
+            // 1. Draw Original Video Feed
             ctx.drawImage(video, offX, offY, drawW, drawH);
-            
-            // Overlay Grid (Tech feel)
-            if (CONFIG.style !== 'Filter') {
-                ctx.strokeStyle = 'rgba(255, 255, 255, 0.05)';
-                ctx.lineWidth = 0.5;
-                const gridSizeDisplay = 100;
-                ctx.beginPath();
-                // Draw a few grid lines
-                for(let gx=offX; gx<offX+drawW; gx+=gridSizeDisplay) { ctx.moveTo(gx, offY); ctx.lineTo(gx, offY+drawH); }
-                for(let gy=offY; gy<offY+drawH; gy+=gridSizeDisplay) { ctx.moveTo(offX, gy); ctx.lineTo(offX+drawW, gy); }
-                ctx.stroke();
-            }
-            
-            ctx.restore();
-
-            // Draw Blobs
-            ctx.strokeStyle = CONFIG.color;
-            ctx.fillStyle = CONFIG.color;
-            ctx.lineWidth = 1; // Thinner lines
-            ctx.font = '10px monospace'; // Modern monospace font
             
             // Scale factor from process res to display res
             const sx = drawW / width;
             const sy = drawH / height;
+
+            // 2. Draw Inverted Blobs (Negative Effect)
+            if (blobs.length > 0) {
+                ctx.save();
+                ctx.beginPath();
+                blobs.forEach(b => {
+                    const bx = offX + b.x * sx;
+                    const by = offY + b.y * sy;
+                    const bw = b.w * sx;
+                    const bh = b.h * sy;
+                    ctx.rect(bx, by, bw, bh);
+                });
+                ctx.clip();
+                ctx.filter = 'invert(100%)';
+                ctx.drawImage(video, offX, offY, drawW, drawH);
+                ctx.restore();
+            }
+
+            // 3. Draw Connecting Lines Between Blobs
+            if (blobs.length > 1) {
+                ctx.beginPath();
+                ctx.strokeStyle = CONFIG.color;
+                ctx.lineWidth = 1;
+                ctx.globalAlpha = 0.4;
+                
+                // Array to keep track of how many connections each blob has
+                const connectionCounts = new Array(blobs.length).fill(0);
+                
+                for (let i = 0; i < blobs.length; i++) {
+                    // Find distances to all other blobs
+                    const distances = [];
+                    const b1 = blobs[i];
+                    const cx1 = offX + (b1.x + b1.w / 2) * sx;
+                    const cy1 = offY + (b1.y + b1.h / 2) * sy;
+                    
+                    for (let j = 0; j < blobs.length; j++) {
+                        if (i === j) continue;
+                        const b2 = blobs[j];
+                        const cx2 = offX + (b2.x + b2.w / 2) * sx;
+                        const cy2 = offY + (b2.y + b2.h / 2) * sy;
+                        const dist = Math.hypot(cx1 - cx2, cy1 - cy2);
+                        distances.push({ index: j, dist: dist, cx: cx2, cy: cy2 });
+                    }
+                    
+                    // Sort by distance (closest first)
+                    distances.sort((a, b) => a.dist - b.dist);
+                    
+                    // Connect to closest blobs, up to 3 connections per blob total
+                    for (let k = 0; k < distances.length; k++) {
+                        if (connectionCounts[i] >= 3) break;
+                        
+                        const target = distances[k];
+                        // Only connect if within reasonable distance and target hasn't maxed out connections
+                        // (We only draw if i < target.index to avoid drawing same line twice,
+                        // but we need to count it for both)
+                        if (target.dist < drawW * 0.5 && connectionCounts[target.index] < 3) {
+                            if (i < target.index) {
+                                ctx.moveTo(cx1, cy1);
+                                ctx.lineTo(target.cx, target.cy);
+                            }
+                            connectionCounts[i]++;
+                            connectionCounts[target.index]++;
+                        }
+                    }
+                }
+                ctx.stroke();
+                ctx.globalAlpha = 1.0;
+            }
+
+            // 4. Draw Blobs UI (Borders and Text)
+            ctx.strokeStyle = CONFIG.color;
+            ctx.fillStyle = CONFIG.color;
+            ctx.lineWidth = 1; // Thinner lines
+            ctx.font = '10px monospace'; // Modern monospace font
 
             blobs.forEach(b => {
                 const bx = offX + b.x * sx;
@@ -410,52 +487,26 @@
                 const bw = b.w * sx;
                 const bh = b.h * sy;
                 
-                if (CONFIG.style === 'Area') {
-                    // Modern Area: Thin diagonal hatch or low opacity fill
-                    ctx.save();
-                    ctx.globalAlpha = 0.1;
-                    ctx.fillStyle = CONFIG.color;
-                    ctx.fillRect(bx, by, bw, bh);
-                    ctx.globalAlpha = 0.5;
-                    ctx.strokeRect(bx, by, bw, bh);
-                    ctx.restore();
-                    
-                    // Crosshair
-                    const cx = bx + bw/2;
-                    const cy = by + bh/2;
-                    const size = 10;
-                    ctx.beginPath();
-                    ctx.moveTo(cx - size, cy); ctx.lineTo(cx + size, cy);
-                    ctx.moveTo(cx, cy - size); ctx.lineTo(cx, cy + size);
-                    ctx.stroke();
-
-                } else if (CONFIG.style === 'Basic') {
-                    // Basic: Modern Tech Corners
-                    const corner = 15;
-                    ctx.beginPath();
-                    // TL
-                    ctx.moveTo(bx, by + corner); ctx.lineTo(bx, by); ctx.lineTo(bx + corner, by);
-                    // TR
-                    ctx.moveTo(bx + bw - corner, by); ctx.lineTo(bx + bw, by); ctx.lineTo(bx + bw, by + corner);
-                    // BL
-                    ctx.moveTo(bx, by + bh - corner); ctx.lineTo(bx, by + bh); ctx.lineTo(bx + corner, by + bh);
-                    // BR
-                    ctx.moveTo(bx + bw - corner, by + bh); ctx.lineTo(bx + bw, by + bh); ctx.lineTo(bx + bw, by + bh - corner);
-                    ctx.stroke();
-                    
-                    // Add small dots in corners
-                    ctx.fillStyle = CONFIG.color;
-                    ctx.fillRect(bx - 1, by - 1, 2, 2);
-                    ctx.fillRect(bx + bw - 1, by - 1, 2, 2);
-                    ctx.fillRect(bx - 1, by + bh - 1, 2, 2);
-                    ctx.fillRect(bx + bw - 1, by + bh - 1, 2, 2);
-
-                } else {
-                    // Filter / Invert: Simple Thin Box
-                    ctx.lineWidth = 0.5;
-                    ctx.strokeRect(bx, by, bw, bh);
-                }
+                // Basic: Modern Tech Corners
+                const corner = 15;
+                ctx.beginPath();
+                // TL
+                ctx.moveTo(bx, by + corner); ctx.lineTo(bx, by); ctx.lineTo(bx + corner, by);
+                // TR
+                ctx.moveTo(bx + bw - corner, by); ctx.lineTo(bx + bw, by); ctx.lineTo(bx + bw, by + corner);
+                // BL
+                ctx.moveTo(bx, by + bh - corner); ctx.lineTo(bx, by + bh); ctx.lineTo(bx + corner, by + bh);
+                // BR
+                ctx.moveTo(bx + bw - corner, by + bh); ctx.lineTo(bx + bw, by + bh); ctx.lineTo(bx + bw, by + bh - corner);
+                ctx.stroke();
                 
+                // Add small dots in corners
+                ctx.fillStyle = CONFIG.color;
+                ctx.fillRect(bx - 1, by - 1, 2, 2);
+                ctx.fillRect(bx + bw - 1, by - 1, 2, 2);
+                ctx.fillRect(bx - 1, by + bh - 1, 2, 2);
+                ctx.fillRect(bx + bw - 1, by + bh - 1, 2, 2);
+
                 // Info Tag
                 ctx.save();
                 // Draw a tech-style label
@@ -476,20 +527,6 @@
                 ctx.globalAlpha = 0.7;
                 ctx.fillText(`[${Math.round(bx)},${Math.round(by)}]`, bx + bw + 58, by - 4);
                 ctx.restore();
-                
-                // Trails
-                if (CONFIG.showTrails && b.trail.length > 1) {
-                    ctx.beginPath();
-                    ctx.strokeStyle = CONFIG.color;
-                    ctx.lineWidth = 0.5; // Very thin trails
-                    ctx.globalAlpha = 0.4;
-                    ctx.moveTo(offX + b.trail[0].x * sx, offY + b.trail[0].y * sy);
-                    for (let i = 1; i < b.trail.length; i++) {
-                        ctx.lineTo(offX + b.trail[i].x * sx, offY + b.trail[i].y * sy);
-                    }
-                    ctx.stroke();
-                    ctx.globalAlpha = 1.0;
-                }
             });
         }
 

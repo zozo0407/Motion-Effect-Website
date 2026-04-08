@@ -7,4 +7,7 @@
 .env
 .env.*
 参考/
-
+暂时放置/
+.vscode/
+.temp_previews/
+/.worktrees/

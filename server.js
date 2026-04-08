@@ -3,15 +3,59 @@ const bodyParser = require('body-parser');
 const fs = require('fs');
 const path = require('path');
 const cors = require('cors');
+require('dotenv').config();
 
 const app = express();
-const PORT = 3000;
+const PORT = process.env.PORT || 3000;
 const DATA_FILE = path.join(__dirname, 'my-motion-portfolio/public/data/demos.json');
 const DEMO_DIR = path.join(__dirname, 'my-motion-portfolio/public/demos');
 
 app.use(cors());
 app.use(bodyParser.json());
+app.get('/favicon.ico', (req, res) => res.status(204).end());
 app.use(express.static(__dirname)); // Serve root directly
+
+async function generateEffectV2FromPrompt(prompt, apiKey, baseUrl, model) {
+    const read = (f) => {
+        try {
+            return fs.readFileSync(path.join(PROMPTS_DIR, f), 'utf8');
+        } catch (_) {
+            return '';
+        }
+    };
+
+    const systemPromptTemplate = read('v2-prompt.md');
+    const systemPrompt = systemPromptTemplate.split('{{USER_PROMPT}}').join(prompt);
+    
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 180000);
+    
+    const res = await fetch(`${baseUrl}/chat/completions`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${apiKey}` },
+        body: JSON.stringify({
+            model,
+            messages: [{ role: 'system', content: systemPrompt }, { role: 'user', content: prompt }],
+            temperature: 0.6 // Balanced temperature for creativity and structure
+        }),
+        signal: controller.signal
+    });
+    
+    clearTimeout(timeoutId);
+    
+    if (!res.ok) {
+        const errText = await res.text();
+        throw new Error(`Generation failed: ${res.status} ${errText}`);
+    }
+    
+    const data = await res.json();
+    const finalCodeContent = (data && data.choices && data.choices[0] && data.choices[0].message && data.choices[0].message.content) || '';
+
+    let generatedCode = stripMarkdownCodeFence(finalCodeContent).trim();
+    generatedCode = normalizeThreeNamespaceImport(generatedCode);
+
+    return generatedCode;
+}
 
 function normalizeAIBaseUrl(baseUrl) {
     const raw = typeof baseUrl === 'string' ? baseUrl.trim() : '';
@@ -39,6 +83,12 @@ function getAIConfig() {
 }
 
 const PROMPTS_DIR = path.join(__dirname, 'prompts');
+const TEMP_PREVIEWS_DIR = path.join(__dirname, '.temp_previews');
+
+// Ensure temp directory exists
+if (!fs.existsSync(TEMP_PREVIEWS_DIR)) {
+    fs.mkdirSync(TEMP_PREVIEWS_DIR, { recursive: true });
+}
 
 async function classifyStyle(prompt, apiKey, baseUrl, model) {
     const sysPrompt = `You are a router. Classify the following user request for a 3D scene into one of these styles:
@@ -100,15 +150,25 @@ function assemblePrompt(style, userPrompt) {
     let styleText = read(`styles/${style}.md`);
     if (!styleText) styleText = read('styles/default.md'); // fallback
     const contract = read('engine-contract.md');
+    
+    // Inject few-shot example if available
+    let exampleText = read(`styles/${style}-example.md`);
+    if (!exampleText && style !== 'default') {
+        exampleText = read('styles/default-example.md');
+    }
 
-    let fullPrompt = `${base}\n\n${styleText}\n\n${contract}`;
+    let fullPrompt = `${base}\n\n${styleText}\n\n${exampleText ? exampleText + '\n\n' : ''}${contract}`;
     return fullPrompt.split('{{USER_PROMPT}}').join(userPrompt);
 }
 
 function stripMarkdownCodeFence(text) {
     if (typeof text !== 'string') return '';
-    const m = text.match(/^```[a-zA-Z0-9_-]*\s*\n([\s\S]*?)\n```$/);
-    return m ? m[1] : text;
+    // Optional: Extract CoT if we want to log it, but for now we just keep it or let it be part of the code block.
+    // Usually, the LLM will output the code block including the comment.
+    // If it outputs the comment outside the code block, we might need to be careful.
+    let m = text.match(/```[a-zA-Z0-9_-]*\s*\n([\s\S]*?)\n```/);
+    let code = m ? m[1] : text;
+    return code;
 }
 
 function normalizeThreeNamespaceImport(codeText) {
@@ -521,6 +581,10 @@ export default class EngineEffect {
     }
 
     try {
+        if (req && req.query && String(req.query.v || '') === '2') {
+            const generatedCode = await generateEffectV2FromPrompt(prompt, apiKey, baseUrl, model);
+            return res.json({ code: generatedCode });
+        }
         const style = await classifyStyle(prompt, apiKey, baseUrl, model);
         const systemPrompt = assemblePrompt(style, prompt);
 
@@ -576,6 +640,35 @@ export default class EngineEffect {
             return;
         }
         res.status(500).json({ error: 'Internal Server Error' });
+    }
+});
+
+function basicSyntaxScan(code) {
+    if (!code) return 'Code is empty';
+    if (!/import\s+.*from\s+['"]three['"]/.test(code) && !/const\s+THREE/.test(code)) {
+        return 'Missing Three.js import';
+    }
+    if (!/export\s+default\s+class\s+EngineEffect/.test(code)) {
+        return 'Missing "export default class EngineEffect"';
+    }
+    if (!/setParam\s*\(/.test(code)) {
+        return 'Missing setParam method';
+    }
+    return null;
+}
+
+app.post('/api/generate-effect-v2', async (req, res) => {
+    const body = req.body && typeof req.body === 'object' ? req.body : {};
+    const prompt = typeof body.prompt === 'string' ? body.prompt : '';
+    if (!prompt.trim()) return res.status(400).json({ error: 'Prompt is required' });
+    const { apiKey, baseUrl, model } = getAIConfig();
+    if (!apiKey) return res.status(400).json({ error: 'Missing AI_API_KEY' });
+    try {
+        const generatedCode = await generateEffectV2FromPrompt(prompt, apiKey, baseUrl, model);
+        res.json({ code: generatedCode });
+    } catch (e) {
+        console.error('Two-step generation failed:', e);
+        res.status(500).json({ error: e && e.message ? e.message : 'Internal Server Error' });
     }
 });
 
@@ -666,6 +759,152 @@ app.post('/api/import-script-scene', (req, res) => {
     });
 });
 
+// API: Save Preview as Permanent Demo
+app.post('/api/save-preview-as-demo', (req, res) => {
+    const { id, title, enTitle, tech, keywords, icon } = req.body;
+    
+    if (!id) return res.status(400).json({ error: 'Missing preview ID' });
+    
+    const tempPath = path.join(TEMP_PREVIEWS_DIR, `${id}.js`);
+    if (!fs.existsSync(tempPath)) {
+        return res.status(404).json({ error: 'Preview code not found' });
+    }
+    
+    const sourceContent = fs.readFileSync(tempPath, 'utf8');
+    
+    // We can reuse the import-script-scene logic to generate the full HTML
+    // But since it's an EngineEffect, we need to wrap it appropriately.
+    // The import-script-scene API handles "ScriptScene", but let's make sure it handles EngineEffect too.
+    // Actually, the easiest way is to just call our own /api/import-script-scene internally or simulate it.
+    // Let's use a simpler approach: build the HTML directly here.
+    
+    fs.readFile(DATA_FILE, 'utf8', (err, data) => {
+        if (err) return res.status(500).json({ error: 'Read error' });
+        
+        const list = JSON.parse(data);
+        let maxId = 0;
+        list.forEach(d => {
+            const num = parseInt(d.id, 10);
+            if (!isNaN(num) && num > maxId) maxId = num;
+        });
+        
+        const newId = String(maxId + 1).padStart(3, '0');
+        const fileName = `demo${maxId + 1}.html`;
+        const filePath = path.join(DEMO_DIR, fileName);
+        
+        const safeCode = sourceContent.replace(/`/g, '\\`').replace(/\$/g, '\\$').replace(/<\//g, '<\\/');
+        
+        const html = `<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>${title || 'AI Generated'}</title>
+    <style>
+        body, html { margin: 0; padding: 0; width: 100%; height: 100%; background: #111; overflow: hidden; }
+        #canvas-container { width: 100%; height: 100%; }
+    </style>
+    <script type="importmap">
+    {
+        "imports": {
+            "three": "https://unpkg.com/three@0.160.0/build/three.module.js",
+            "three/addons/": "https://unpkg.com/three@0.160.0/examples/jsm/"
+        }
+    }
+    </script>
+</head>
+<body>
+    <div id="canvas-container"></div>
+    <script type="module">
+        const codeSource = \`${safeCode}\`;
+        
+        async function init() {
+            try {
+                const blob = new Blob([codeSource], { type: 'application/javascript' });
+                const url = URL.createObjectURL(blob);
+                const mod = await import(url);
+                URL.revokeObjectURL(url);
+                
+                const EngineEffect = mod.default || mod.EngineEffect;
+                if (!EngineEffect) return;
+
+                const effect = new EngineEffect();
+                const container = document.getElementById('canvas-container');
+                const canvas = document.createElement('canvas');
+                canvas.style.width = '100%';
+                canvas.style.height = '100%';
+                canvas.style.display = 'block';
+                container.appendChild(canvas);
+
+                const getSize = () => ({
+                    width: window.innerWidth,
+                    height: window.innerHeight,
+                    dpr: Math.min(2, window.devicePixelRatio || 1)
+                });
+
+                effect.onStart({ container, canvas, gl: null, size: getSize() });
+
+                window.addEventListener('resize', () => {
+                    const size = getSize();
+                    canvas.width = size.width * size.dpr;
+                    canvas.height = size.height * size.dpr;
+                    if (effect.onResize) effect.onResize(size);
+                });
+
+                let lastTime = performance.now();
+                const frame = (now) => {
+                    const time = now / 1000;
+                    const deltaTime = Math.max(0, (now - lastTime) / 1000);
+                    lastTime = now;
+                    if (effect.onUpdate) effect.onUpdate({ time, deltaTime, size: getSize() });
+                    requestAnimationFrame(frame);
+                };
+                requestAnimationFrame(frame);
+                
+                // Expose UI Config if in iframe
+                window.addEventListener('message', (e) => {
+                    if(e.data.type === 'HANDSHAKE') {
+                        const config = effect.getUIConfig ? effect.getUIConfig() : [];
+                        window.parent.postMessage({ type: 'UI_CONFIG', config }, '*');
+                    } else if (e.data.type === 'UPDATE_PARAM' && effect.setParam) {
+                        effect.setParam(e.data.key, e.data.value);
+                    }
+                });
+                
+            } catch (e) {
+                console.error(e);
+            }
+        }
+        init();
+    </script>
+</body>
+</html>`;
+
+        fs.writeFile(filePath, html, (err) => {
+            if (err) return res.status(500).json({ error: 'Write file error' });
+            
+            const newDemo = {
+                id: newId,
+                title: title || 'AI Generated Effect',
+                keywords: keywords || 'ai, generated',
+                enTitle: enTitle || 'AI Generated Effect',
+                tech: tech || 'Three.js / AI',
+                url: `my-motion-portfolio/public/demos/${fileName}`,
+                color: 'text-gray-400',
+                isOriginal: true,
+                icon: icon || '<circle cx="100" cy="100" r="50" stroke="currentColor" fill="none" />'
+            };
+            
+            list.unshift(newDemo);
+            
+            fs.writeFile(DATA_FILE, JSON.stringify(list, null, 4), (err) => {
+                if (err) return res.status(500).json({ error: 'Update JSON error' });
+                res.json({ success: true, demo: newDemo });
+            });
+        });
+    });
+});
+
 // API: Create New Demo Placeholder
 app.post('/api/create-demo', (req, res) => {
     const { title, enTitle, tech, keywords, icon } = req.body;
@@ -743,6 +982,110 @@ app.post('/api/create-demo', (req, res) => {
             });
         });
     });
+});
+
+// API: Preview Temporary Generated Code
+app.get('/preview/:id', (req, res) => {
+    const id = req.params.id;
+    const filePath = path.join(TEMP_PREVIEWS_DIR, `${id}.js`);
+    
+    if (!fs.existsSync(filePath)) {
+        return res.status(404).send('Preview not found or expired.');
+    }
+
+    const code = fs.readFileSync(filePath, 'utf8');
+    const safeCode = code.replace(/`/g, '\\`').replace(/\$/g, '\\$').replace(/<\//g, '<\\/');
+
+    const html = `<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Quick Preview</title>
+    <style>
+        body, html { margin: 0; padding: 0; width: 100%; height: 100%; background: #111; overflow: hidden; }
+        #canvas-container { width: 100%; height: 100%; }
+        #error-overlay { position: fixed; top: 0; left: 0; width: 100%; padding: 20px; background: rgba(255,0,0,0.8); color: white; display: none; z-index: 9999; font-family: monospace; white-space: pre-wrap;}
+    </style>
+    <script type="importmap">
+    {
+        "imports": {
+            "three": "https://unpkg.com/three@0.160.0/build/three.module.js",
+            "three/addons/": "https://unpkg.com/three@0.160.0/examples/jsm/"
+        }
+    }
+    </script>
+</head>
+<body>
+    <div id="error-overlay"></div>
+    <div id="canvas-container"></div>
+    <script type="module">
+        const codeSource = \`${safeCode}\`;
+        
+        function showError(e) {
+            const errDiv = document.getElementById('error-overlay');
+            errDiv.textContent = e.message || String(e);
+            errDiv.style.display = 'block';
+            console.error(e);
+        }
+
+        async function init() {
+            try {
+                const blob = new Blob([codeSource], { type: 'application/javascript' });
+                const url = URL.createObjectURL(blob);
+                const mod = await import(url);
+                URL.revokeObjectURL(url);
+                
+                const EngineEffect = mod.default || mod.EngineEffect;
+                if (!EngineEffect) throw new Error('Cannot find default class EngineEffect');
+
+                const effect = new EngineEffect();
+                const container = document.getElementById('canvas-container');
+                const canvas = document.createElement('canvas');
+                canvas.style.width = '100%';
+                canvas.style.height = '100%';
+                canvas.style.display = 'block';
+                container.appendChild(canvas);
+
+                const getSize = () => ({
+                    width: window.innerWidth,
+                    height: window.innerHeight,
+                    dpr: Math.min(2, window.devicePixelRatio || 1)
+                });
+
+                effect.onStart({
+                    container,
+                    canvas,
+                    gl: null,
+                    size: getSize()
+                });
+
+                window.addEventListener('resize', () => {
+                    const size = getSize();
+                    canvas.width = size.width * size.dpr;
+                    canvas.height = size.height * size.dpr;
+                    if (effect.onResize) effect.onResize(size);
+                });
+
+                let lastTime = performance.now();
+                const frame = (now) => {
+                    const time = now / 1000;
+                    const deltaTime = Math.max(0, (now - lastTime) / 1000);
+                    lastTime = now;
+                    if (effect.onUpdate) effect.onUpdate({ time, deltaTime, size: getSize() });
+                    requestAnimationFrame(frame);
+                };
+                requestAnimationFrame(frame);
+            } catch (e) {
+                showError(e);
+            }
+        }
+        init();
+    </script>
+</body>
+</html>`;
+
+    res.send(html);
 });
 
 app.listen(PORT, () => {
