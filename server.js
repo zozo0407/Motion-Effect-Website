@@ -5,6 +5,10 @@ const path = require('path');
 const cors = require('cors');
 require('dotenv').config();
 
+const { routePromptToSkeleton } = require('./tools/creator/skeleton-router.cjs');
+const { buildGlowSphereEffectCode } = require('./tools/creator/skeletons/glow-sphere.cjs');
+const { buildParticlesEffectCode } = require('./tools/creator/skeletons/particles.cjs');
+
 const app = express();
 const PORT = process.env.PORT || 3000;
 const DATA_FILE = path.join(__dirname, 'my-motion-portfolio/public/data/demos.json');
@@ -469,6 +473,23 @@ app.post('/api/generate-effect', async (req, res) => {
     const prompt = body.prompt;
     if (typeof prompt !== 'string' || !prompt.trim()) {
         return res.status(400).json({ error: 'Prompt is required' });
+    }
+
+    // Demo stable mode: bypass LLM codegen and always return a known-good skeleton.
+    // This is designed for public-facing demos where "always preview" beats "perfect fidelity".
+    if (String(process.env.AI_DEMO_MODE || '') === '1') {
+        try {
+            const routed = routePromptToSkeleton(prompt);
+            const params = routed && routed.params ? routed.params : {};
+            const code = routed && routed.kind === 'particles'
+                ? buildParticlesEffectCode(params)
+                : buildGlowSphereEffectCode(params);
+            return res.json({ code });
+        } catch (e) {
+            // Last-resort fallback: glow sphere with safe defaults.
+            const code = buildGlowSphereEffectCode({ color: '#ff0040', glowIntensity: 1.2, speed: 1.0 });
+            return res.json({ code });
+        }
     }
 
     const { apiKey, baseUrl, model } = getAIConfig();
