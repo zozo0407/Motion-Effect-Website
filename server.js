@@ -85,7 +85,7 @@ async function generateEffectV2FromPrompt(prompt, apiKey, baseUrl, model) {
         ],
         temperature: 0.5,
         maxTokens: 8192,
-        timeoutMs: 120000
+        timeoutMs: 180000
     });
 
     if (!codeRes.ok) {
@@ -824,8 +824,15 @@ export default class EngineEffect {
         if (req && req.query && String(req.query.v || '') === '2') {
             let generatedCode = await generateEffectV2FromPrompt(prompt, apiKey, baseUrl, model);
             generatedCode = autoFixEngineEffectCode(generatedCode);
-            const scanErr = validateEngineEffectCode(generatedCode);
-            if (scanErr) return res.status(502).json({ error: `AI 输出不符合 EngineEffect 合约：${scanErr}` });
+            let scanErr = validateEngineEffectCode(generatedCode);
+            if (scanErr) {
+                console.log(`[v2][generate] Validation failed: ${scanErr}, attempting repair...`);
+                const repaired = await repairEngineEffectCode({ prompt, badCode: generatedCode, error: scanErr, apiKey, baseUrl, model });
+                const repairedFixed = autoFixEngineEffectCode(repaired);
+                scanErr = validateEngineEffectCode(repairedFixed);
+                if (scanErr) return res.status(502).json({ error: `AI 输出不符合 EngineEffect 合约：${scanErr}` });
+                return res.json({ code: repairedFixed });
+            }
             return res.json({ code: generatedCode });
         }
         const style = await classifyStyle(prompt, apiKey, baseUrl, model);
