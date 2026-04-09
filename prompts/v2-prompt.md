@@ -12,7 +12,7 @@
 4. 动效数学公式：...
 DESIGN_PLAN_END */
 
-### 🌟 顶级视觉与审美规范 (Aesthetics First - 高级质感风格)
+### 🌟 顶级视觉与审美规范 (Aesthetics First - Web 端极佳质感)
 1. **色彩美学 (Color Theory)**：
    - 绝不使用高饱和度、刺眼的纯色（如纯红 #FF0000、纯绿 #00FF00）。
    - 强制使用高级色系：低饱和度渐变、莫兰迪色、赛博朋克霓虹、或极简黑白灰配上局部高光。
@@ -28,10 +28,10 @@ DESIGN_PLAN_END */
    - 优先使用 **`THREE.MeshPhysicalMaterial`**，拉满质感：使用 `clearcoat`（清漆）、`transmission`（玻璃透射）、`ior`（折射率）、`thickness`、`iridescence`（彩虹色/晕彩）。
    - 如果使用 `ShaderMaterial`，请编写自定义的流光、溶解、或发光效果。
 
-4. **构图与动效 (Composition & Motion)**：
-   - 拒绝僵硬的线性运动。必须使用三角函数（`Math.sin`, `Math.cos`）制造**呼吸感、流体感、有机感**。
-   - 摄像机视角要讲究，可以通过缓慢的 FOV 变化或极轻微的摄像机漂移（Camera Drift）增加电影感。
-   - 场景中应有丰富的细节（如主视觉周围有细小的粒子漂浮）。
+4. **Web 性能红线 (Performance Limits)**：
+   - 如果要渲染超过 1000 个相同几何体（如粒子、网格），**必须**使用 `THREE.InstancedMesh` 或 `THREE.Points`。
+   - **绝对禁止**在 `onUpdate` 的每一帧循环中 `new` 任何对象（如 `new THREE.Vector3()`、`new THREE.Color()`）。在外部预先定义好这些临时变量并在循环中复用（如 `this.tempVec.set(...)`）。
+   - 不要创建过于复杂的几何体（如分段数极高的球体或管状体），保持 `segments` 在合理范围（如 32-64）。
 
 ### ⚙️ 引擎适配规范 (Engine Contract - 必须严格遵守)
 你的代码将由外部引擎的生命周期驱动，必须输出符合规范的 ES Module。
@@ -51,10 +51,17 @@ DESIGN_PLAN_END */
      - 【Shader 变量示例】：`if (key === 'speed' && this.material) { this.material.uniforms.uSpeed.value = value; }`
      - 确保每一个在 `getUIConfig()` 中定义的 `bind` 字段，在 `setParam` 中都写了对应的同步逻辑！
 4. **绝对红线**：
-   - 第一行必须是：`import * as THREE from 'three';`
+   - 在 `/* DESIGN_PLAN_START ... DESIGN_PLAN_END */` 注释块之后的第一行必须是：`import * as THREE from 'three';`
    - **只返回纯代码**，绝对不要用 markdown 的 ```javascript ``` 等包裹，也不要任何解释文本。直接输出可执行的 JS 代码。
    - 保持自包含（Self-contained），**不请求外部图片或贴图**，所有纹理必须用 Canvas API 动态生成或使用 Shader 计算。
    - 始终使用 `THREE.` 命名空间。
+
+### ✅ 输出前自检（必须全部满足，否则不要输出）
+1. 是否包含且仅包含一个 `DESIGN_PLAN` 注释块？
+2. `DESIGN_PLAN` 之后是否紧跟 `import * as THREE from 'three';`？
+3. 是否 `export default class EngineEffect`？
+4. 是否实现并包含这些方法：`constructor`, `onStart`, `onUpdate`, `onResize`, `onDestroy`, `getUIConfig`, `setParam`？
+5. `getUIConfig()` 里的每个 `bind` 是否都在 `setParam` 里同步到 Three.js 对象（材质/Uniform/相机等）？
 
 ---
 

@@ -2,9 +2,9 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** 把现有 AI 导演台升级为“1 句话输入 → 只在不明确时反问 → 生成预览 → 继续对话修改”的可运行体验，并保留现有 `game.js` 导出链路。
+**Goal:** 把现有 AI 导演台升级为“1 句话输入 → 直接生成预览”的可运行体验，不再做“不明确时反问”，追求最快出首帧，并引入“二极管分级兜底”（L1大模型生成 / L2瞬间本地兜底），确保 100% 可预览。
 
-**Architecture:** 采用方案 C：先走低成本规则判定是否需要澄清，只有灰区请求再调用 LLM 做澄清判定。前端维护一个轻量导演台状态机；后端新增 AI Director 专用接口，统一返回 `clarify` / `preview` / `patch` 三类响应。参数可映射的修改优先走本地调参，结构性修改则触发重生成。
+**Architecture:** 采用“零等待”策略：废弃之前的规则判定与灰区反问层，所有 prompt 直接组装并送给 LLM（L1）。前端维护一个极简的导演台状态机；后端新增 AI Director 专用接口，统一返回 `preview` / `patch` / `error`。设置 60s 硬熔断时间。如果超时或运行崩溃，根据用户 prompt 的关键词语义，映射并加载最接近意图的 L2 本地骨架兜底（如用户要复杂的球，失败后给一个基础的三维发光球，绝不给无关的模板）。
 
 **Tech Stack:** Vite、原生前端 JS、Express、现有 OpenAI-compatible chat/completions、浏览器端 embeddings、本地 `tools/tests/*.cjs` 校验脚本。
 
@@ -15,148 +15,37 @@
 **前端**
 - Modify: `src/site/ai-chat.js`
   - 从“本地语义调参工具”升级为“AI 导演台主控器”
-  - 维护导演台状态（idle / clarify / generating / preview-ready / iterating / failed）
-  - 负责发送消息、渲染反问、承接预览成功后的继续对话修改
+  - 维护极简导演台状态（idle / generating / preview-ready / iterating / failed）
+  - 负责发送消息、承接预览成功后的继续对话修改
 - Modify: `src/site/wizard.js`
   - 把 `generateDemo()` 中 AI custom 路径下沉为可复用的“加载 preview HTML”能力
   - 允许 AI 导演台复用预览加载逻辑，而不是只服务 Wizard
 - Modify: `src/main.js`
   - 初始化 AI 导演台的新入口与全局桥接函数
-- Modify: `index.html`
-  - 调整 AI 导演台输入区和历史区，支持反问卡片与状态提示
 
 **后端**
 - Create: `server/ai-director/contracts.js`
   - 响应 contract、状态枚举、schema 常量
-- Create: `server/ai-director/rules.js`
-  - 低成本规则判定：明确 / 明显缺失 / 灰区
-- Create: `server/ai-director/clarify.js`
-  - 灰区 LLM 澄清判定与问题生成
 - Create: `server/ai-director/prompt.js`
-  - 最终 prompt 组装：用户原话 + 澄清回答 + 默认假设 + 现有 v2 prompt
+  - 最终 prompt 组装：用户原话 + 现有 v2 prompt
+- Create: `server/ai-director/fallback.js`
+  - 维护基础兜底模板库（简单球体、简单粒子、发光文字等）
+  - 提供根据 user prompt 做正则/语义匹配获取最接近骨架的能力
 - Modify: `server.js`
   - 暴露新的 `/api/ai-director/message` 接口
   - 复用已有生成函数 `generateEffectV2FromPrompt`
+  - 增加 60s 硬熔断
 
 **测试**
-- Create: `tools/tests/ai-director-rules.test.cjs`
 - Create: `tools/tests/ai-director-api.test.cjs`
 - Create: `tools/tests/ai-director-ui-contract.test.cjs`
 
 ---
 
-### Task 1: 建立 AI Director 的后端 contract 与规则判定
+### Task 1: 建立 AI Director 的后端 contract 与基础结构
 
 **Files:**
 - Create: `server/ai-director/contracts.js`
-- Create: `server/ai-director/rules.js`
-- Test: `tools/tests/ai-director-rules.test.cjs`
-
-- [ ] **Step 1: 写失败测试，锁定规则判定行为**
-
-```js
-const assert = require('assert');
-const { analyzePrompt } = require('../../server/ai-director/rules');
-
-const clearPrompt = analyzePrompt('做一个赛博朋克风的发光粒子文字，透明背景，可循环播放');
-assert.equal(clearPrompt.decision, 'generate');
-
-const vaguePrompt = analyzePrompt('做个酷炫特效');
-assert.equal(vaguePrompt.decision, 'clarify');
-assert(vaguePrompt.missingSlots.includes('subject'));
-
-const grayPrompt = analyzePrompt('做一个有电影感的粒子效果');
-assert.equal(grayPrompt.decision, 'gray');
-```
-
-- [ ] **Step 2: 运行测试，确认当前失败**
-
-Run: `node tools/tests/ai-director-rules.test.cjs`  
-Expected: FAIL，报错 `Cannot find module '../../server/ai-director/rules'`
-
-- [ ] **Step 3: 实现最小 contract 常量**
-
-```js
-// server/ai-director/contracts.js
-const DIRECTOR_STATES = {
-  IDLE: 'idle',
-  CLARIFY: 'clarify',
-  GENERATING: 'generating',
-  PREVIEW_READY: 'preview_ready',
-  ITERATING: 'iterating',
-  FAILED: 'failed',
-};
-
-const DIRECTOR_REPLY_TYPES = {
-  CLARIFY: 'clarify',
-  PREVIEW: 'preview',
-  PATCH: 'patch',
-  FAILED: 'failed',
-};
-
-module.exports = {
-  DIRECTOR_STATES,
-  DIRECTOR_REPLY_TYPES,
-};
-```
-
-- [ ] **Step 4: 实现最小规则判定器**
-
-```js
-// server/ai-director/rules.js
-const SUBJECT_HINTS = ['文字', '粒子', '线条', '光束', 'glitch', 'text', 'particle'];
-const STYLE_HINTS = ['赛博', 'cyber', 'glitch', '极简', 'minimal', 'toon', '电影感'];
-const BG_HINTS = ['透明', '黑底', '叠加', 'transparent'];
-
-function hasAny(text, words) {
-  return words.some((w) => text.includes(w));
-}
-
-function analyzePrompt(prompt) {
-  const text = String(prompt || '').toLowerCase().trim();
-  const missingSlots = [];
-
-  if (!hasAny(text, SUBJECT_HINTS)) missingSlots.push('subject');
-  if (!hasAny(text, STYLE_HINTS)) missingSlots.push('style');
-
-  if (missingSlots.length >= 2) {
-    return { decision: 'clarify', missingSlots, riskFlags: [] };
-  }
-
-  if (missingSlots.length === 0 && hasAny(text, BG_HINTS)) {
-    return { decision: 'generate', missingSlots: [], riskFlags: [] };
-  }
-
-  if (missingSlots.length === 0) {
-    return { decision: 'generate', missingSlots: [], riskFlags: ['background_unspecified'] };
-  }
-
-  return { decision: 'gray', missingSlots, riskFlags: [] };
-}
-
-module.exports = { analyzePrompt };
-```
-
-- [ ] **Step 5: 重新运行测试，确认通过**
-
-Run: `node tools/tests/ai-director-rules.test.cjs`  
-Expected: PASS
-
-- [ ] **Step 6: Commit**
-
-```bash
-git add server/ai-director/contracts.js server/ai-director/rules.js tools/tests/ai-director-rules.test.cjs
-git commit -m "feat: add ai director rules engine"
-```
-
----
-
-### Task 2: 新增 AI Director 后端消息接口与灰区澄清判定
-
-**Files:**
-- Create: `server/ai-director/clarify.js`
-- Create: `server/ai-director/prompt.js`
-- Modify: `server.js`
 - Test: `tools/tests/ai-director-api.test.cjs`
 
 - [ ] **Step 1: 写失败测试，锁定 API 返回 shape**
@@ -169,7 +58,6 @@ const assert = require('assert');
 const serverText = fs.readFileSync(path.join(__dirname, '..', '..', 'server.js'), 'utf8');
 
 assert(serverText.includes("/api/ai-director/message"), 'server.js should expose /api/ai-director/message');
-assert(serverText.includes("replyType: 'clarify'") || serverText.includes('replyType: "clarify"'));
 assert(serverText.includes("replyType: 'preview'") || serverText.includes('replyType: "preview"'));
 ```
 
@@ -178,47 +66,38 @@ assert(serverText.includes("replyType: 'preview'") || serverText.includes('reply
 Run: `node tools/tests/ai-director-api.test.cjs`  
 Expected: FAIL，提示缺少 `/api/ai-director/message`
 
-- [ ] **Step 3: 实现灰区澄清判定器**
+- [ ] **Step 3: 实现最小 contract 常量**
 
 ```js
-// server/ai-director/clarify.js
-async function clarifyWithLLM({ prompt, apiKey, baseUrl, model, missingSlots = [] }) {
-  const system = [
-    '你是 AI 导演台的澄清判定器。',
-    '只在用户信息不明确时提问。',
-    '输出 JSON：need_clarify/questions/assumptions_if_no_answer/confidence。',
-    'questions 最多 3 个，并尽量给出选项。',
-  ].join('\n');
+// server/ai-director/contracts.js
+const DIRECTOR_STATES = {
+  IDLE: 'idle',
+  GENERATING: 'generating',
+  PREVIEW_READY: 'preview_ready',
+  ITERATING: 'iterating',
+  FAILED: 'failed',
+};
 
-  const res = await fetch(`${baseUrl}/chat/completions`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${apiKey}` },
-    body: JSON.stringify({
-      model,
-      temperature: 0.2,
-      messages: [
-        { role: 'system', content: system },
-        { role: 'user', content: JSON.stringify({ prompt, missingSlots }) },
-      ],
-    }),
-  });
+const DIRECTOR_REPLY_TYPES = {
+  PREVIEW: 'preview',
+  PATCH: 'patch',
+  FAILED: 'failed',
+};
 
-  const data = await res.json();
-  const text = data?.choices?.[0]?.message?.content || '{}';
-  return JSON.parse(text);
-}
-
-module.exports = { clarifyWithLLM };
+module.exports = {
+  DIRECTOR_STATES,
+  DIRECTOR_REPLY_TYPES,
+};
 ```
 
 - [ ] **Step 4: 实现最终生成 prompt 组装器**
 
 ```js
 // server/ai-director/prompt.js
-function buildDirectorPrompt({ prompt, clarifyAnswers = [], assumptions = [] }) {
-  const answerText = clarifyAnswers.length ? `\n澄清答案：\n- ${clarifyAnswers.join('\n- ')}` : '';
-  const assumptionsText = assumptions.length ? `\n默认假设：\n- ${assumptions.join('\n- ')}` : '';
-  return `${prompt}${answerText}${assumptionsText}`;
+function buildDirectorPrompt({ prompt }) {
+  // In single-shot, we just pass the prompt through for now. 
+  // In the future, we could inject style templates here without asking the user.
+  return prompt;
 }
 
 module.exports = { buildDirectorPrompt };
@@ -227,52 +106,31 @@ module.exports = { buildDirectorPrompt };
 - [ ] **Step 5: 在 server.js 中增加 AI Director 路由**
 
 ```js
-const { analyzePrompt } = require('./server/ai-director/rules');
-const { clarifyWithLLM } = require('./server/ai-director/clarify');
 const { buildDirectorPrompt } = require('./server/ai-director/prompt');
 
 app.post('/api/ai-director/message', async (req, res) => {
-  const { prompt, clarifyAnswers = [] } = req.body || {};
+  const { prompt } = req.body || {};
   if (!prompt || typeof prompt !== 'string') {
     return res.status(400).json({ error: 'prompt is required' });
   }
 
   const { apiKey, baseUrl, model } = getAIConfig();
-  const ruleResult = analyzePrompt(prompt);
-
-  if (ruleResult.decision === 'clarify') {
+  const finalPrompt = buildDirectorPrompt({ prompt });
+  
+  // Notice we will add timing and 15s timeout in Task 5
+  try {
+    const code = await generateEffectV2FromPrompt(finalPrompt, apiKey, baseUrl, model);
     return res.json({
-      replyType: 'clarify',
-      questions: ruleResult.missingSlots.map((slot) => ({ id: slot, question: `请补充 ${slot}` })),
-      assumptions: [],
+      replyType: 'preview',
+      code,
+      intentSummary: finalPrompt,
+    });
+  } catch (error) {
+    return res.status(500).json({
+      error: error.message,
+      meta: { isFallback: true, errorCode: 'GENERATION_FAILED' }
     });
   }
-
-  if (ruleResult.decision === 'gray') {
-    const clarify = await clarifyWithLLM({
-      prompt,
-      apiKey,
-      baseUrl,
-      model,
-      missingSlots: ruleResult.missingSlots,
-    });
-    if (clarify.need_clarify) {
-      return res.json({
-        replyType: 'clarify',
-        questions: clarify.questions || [],
-        assumptions: clarify.assumptions_if_no_answer || [],
-      });
-    }
-  }
-
-  const finalPrompt = buildDirectorPrompt({ prompt, clarifyAnswers });
-  const code = await generateEffectV2FromPrompt(finalPrompt, apiKey, baseUrl, model);
-  return res.json({
-    replyType: 'preview',
-    code,
-    intentSummary: finalPrompt,
-    assumptions: [],
-  });
 });
 ```
 
@@ -284,13 +142,13 @@ Expected: PASS
 - [ ] **Step 7: Commit**
 
 ```bash
-git add server/ai-director/clarify.js server/ai-director/prompt.js server.js tools/tests/ai-director-api.test.cjs
-git commit -m "feat: add ai director message api"
+git add server/ai-director/contracts.js server/ai-director/prompt.js server.js tools/tests/ai-director-api.test.cjs
+git commit -m "feat: add single-shot ai director api"
 ```
 
 ---
 
-### Task 3: 重构前端 AI 导演台状态机与“反问后生成”交互
+### Task 2: 重构前端 AI 导演台状态机与“直接生成”交互
 
 **Files:**
 - Modify: `src/site/ai-chat.js`
@@ -319,15 +177,12 @@ assert(htmlText.includes('ai-status'), 'index.html should expose AI status node'
 Run: `node tools/tests/ai-director-ui-contract.test.cjs`  
 Expected: FAIL，提示缺少 `directorState` / `sendDirectorMessage`
 
-- [ ] **Step 3: 在 ai-chat.js 中引入导演台状态**
+- [ ] **Step 3: 在 ai-chat.js 中引入极简导演台状态**
 
 ```js
 let directorState = {
   mode: 'idle',
-  pendingQuestions: [],
-  clarifyAnswers: [],
   lastIntentSummary: '',
-  lastAssumptions: [],
 };
 
 function setDirectorState(patch) {
@@ -338,16 +193,16 @@ function setDirectorState(patch) {
 - [ ] **Step 4: 新增统一消息发送函数**
 
 ```js
-async function sendDirectorMessage({ prompt, updateDemoParam, loadPreviewHTML }) {
+async function sendDirectorMessage({ prompt }) {
   const res = await fetch('/api/ai-director/message', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
       prompt,
-      clarifyAnswers: directorState.clarifyAnswers,
       intentSummary: directorState.lastIntentSummary,
     }),
   });
+  if (!res.ok) throw new Error('API request failed');
   return res.json();
 }
 ```
@@ -356,6 +211,7 @@ async function sendDirectorMessage({ prompt, updateDemoParam, loadPreviewHTML })
 
 ```js
 export async function sendAIChat({ updateDemoParam, loadPreviewHTML }) {
+  const input = document.getElementById('ai-chat-input');
   const msg = input.value.trim();
   if (!msg) return;
 
@@ -363,29 +219,24 @@ export async function sendAIChat({ updateDemoParam, loadPreviewHTML }) {
     const semanticResult = await aiSemanticCommand(msg, window.lastUIConfig || []);
     if (semanticResult) {
       updateDemoParam(semanticResult.param.bind, semanticResult.value);
-      appendAIBubble(semanticResult.text);
+      // append user/ai bubble logic...
       return;
     }
   }
 
   setDirectorState({ mode: 'generating' });
-  const reply = await sendDirectorMessage({ prompt: msg, updateDemoParam, loadPreviewHTML });
-
-  if (reply.replyType === 'clarify') {
-    setDirectorState({ mode: 'clarify', pendingQuestions: reply.questions || [] });
-    renderClarifyQuestions(reply.questions || []);
-    return;
-  }
-
-  if (reply.replyType === 'preview') {
-    setDirectorState({
-      mode: 'preview_ready',
-      pendingQuestions: [],
-      lastIntentSummary: reply.intentSummary || '',
-      lastAssumptions: reply.assumptions || [],
-    });
-    loadPreviewHTML(reply.code);
-    appendAIBubble('已为你生成首版预览，可以继续让我修改。');
+  try {
+    const reply = await sendDirectorMessage({ prompt: msg });
+    if (reply.replyType === 'preview') {
+      setDirectorState({
+        mode: 'preview_ready',
+        lastIntentSummary: reply.intentSummary || '',
+      });
+      loadPreviewHTML(reply.code);
+      // append ai bubble logic...
+    }
+  } catch (err) {
+    // fallback logic handles in task 5
   }
 }
 ```
@@ -412,12 +263,11 @@ export function loadGeneratedHTMLIntoLab(htmlContent) {
 }
 ```
 
-- [ ] **Step 8: 在 index.html 中为反问卡片预留容器**
+- [ ] **Step 8: 在 index.html 中调整状态提示容器**
 
 ```html
 <div id="ai-chat-history" class="..."></div>
-<div id="ai-clarify-panel" class="hidden"></div>
-<div id="ai-status" class="opacity-0">AI 正在待命</div>
+<div id="ai-status" class="opacity-0">AI 正在生成预览...</div>
 ```
 
 - [ ] **Step 9: 重新运行测试，确认通过**
@@ -479,9 +329,9 @@ if (directorState.mode === 'preview_ready') {
 - [ ] **Step 4: 在 server.js 中兼容“意图摘要 + 追加修改”的重生成**
 
 ```js
-const { prompt, clarifyAnswers = [], intentSummary = '' } = req.body || {};
+const { prompt, intentSummary = '' } = req.body || {};
 const mergedPrompt = intentSummary ? `${intentSummary}\n用户追加修改：${prompt}` : prompt;
-const finalPrompt = buildDirectorPrompt({ prompt: mergedPrompt, clarifyAnswers });
+const finalPrompt = buildDirectorPrompt({ prompt: mergedPrompt });
 ```
 
 - [ ] **Step 5: 重新运行测试，确认通过**
@@ -498,54 +348,72 @@ git commit -m "feat: support ai director iterative edits"
 
 ---
 
-### Task 5: 增加基础指标与失败兜底
+### Task 5: 增加基础指标与“二极管”失败兜底 (L1/L2)
 
 **Files:**
 - Modify: `src/site/ai-chat.js`
 - Modify: `server.js`
 - Test: `tools/tests/ai-director-api.test.cjs`
 
-- [ ] **Step 1: 写失败测试，要求接口返回 replyType 与 timing**
+- [ ] **Step 1: 写失败测试，要求接口在超时或错误时返回确定的 error shape**
 
 ```js
 const text = require('fs').readFileSync('server.js', 'utf8');
 if (!text.includes('timingMs')) throw new Error('timingMs missing from ai director responses');
+if (!text.includes("isFallback: true")) throw new Error('isFallback missing from ai director responses');
 ```
 
 - [ ] **Step 2: 运行测试，确认当前失败**
 
 Run: `node tools/tests/ai-director-api.test.cjs`  
-Expected: FAIL，提示缺少 `timingMs`
+Expected: FAIL
 
-- [ ] **Step 3: 在 server.js 中增加 timing 与错误友好化**
+- [ ] **Step 3: 在 server.js 中增加 60s 硬超时与语义化兜底 (L1 熔断)**
 
 ```js
-const startedAt = Date.now();
-try {
-  // existing logic...
-  return res.json({
-    replyType: 'preview',
-    code,
-    intentSummary: finalPrompt,
-    assumptions: [],
-    timingMs: Date.now() - startedAt,
-  });
-} catch (error) {
-  return res.status(500).json({
-    replyType: 'failed',
-    error: error.message,
-    nextAction: '请补充风格、主体或改用更简单的表达再试一次',
-    timingMs: Date.now() - startedAt,
-  });
-}
+const { getFallbackCode } = require('./server/ai-director/fallback');
+
+app.post('/api/ai-director/message', async (req, res) => {
+  const { prompt } = req.body || {};
+  // ... build prompt ...
+  
+  const startedAt = Date.now();
+  try {
+    // pass AbortController with 60000ms
+    const code = await generateEffectV2FromPrompt(finalPrompt, apiKey, baseUrl, model, 60000);
+    return res.json({
+      replyType: 'preview',
+      code,
+      intentSummary: prompt,
+      timingMs: Date.now() - startedAt,
+    });
+  } catch (error) {
+    // On failure, return a semantic fallback skeleton instead of generic error
+    const fallbackCode = getFallbackCode(prompt);
+    return res.status(200).json({
+      replyType: 'preview',
+      code: fallbackCode,
+      intentSummary: prompt,
+      meta: {
+        isFallback: true,
+        errorCode: 'TIMEOUT_OR_CONTRACT_FAIL',
+        errorMsg: error.message
+      },
+      timingMs: Date.now() - startedAt,
+    });
+  }
+});
 ```
 
-- [ ] **Step 4: 在 ai-chat.js 中展示失败兜底文案**
+- [ ] **Step 4: 在 ai-chat.js 中展示兜底提示**
 
 ```js
-if (reply.replyType === 'failed') {
-  setDirectorState({ mode: 'failed' });
-  appendAIBubble(reply.nextAction || '生成失败，请重试');
+// L1 失败但后端返回了兜底代码时
+if (reply.meta?.isFallback) {
+  loadPreviewHTML(reply.code);
+  const fallbackName = reply.meta?.fallbackName || '基础效果';
+  appendAIBubble(`抱歉，生成失败，我已为你退回到了保守方案（${fallbackName}）。你可以基于此继续调整参数。`);
+  setDirectorState({ mode: 'preview_ready', lastIntentSummary: reply.intentSummary });
   return;
 }
 ```
@@ -559,7 +427,7 @@ Expected: PASS
 
 ```bash
 git add server.js src/site/ai-chat.js tools/tests/ai-director-api.test.cjs tools/tests/ai-director-ui-contract.test.cjs
-git commit -m "feat: add ai director fallback and metrics"
+git commit -m "feat: add L1/L2 binary fallback and metrics"
 ```
 
 ---
@@ -567,14 +435,14 @@ git commit -m "feat: add ai director fallback and metrics"
 ## Spec Coverage Check
 
 - **已覆盖**
-  - 一句话输入
-  - 不明确才反问
-  - 反问后生成预览
-  - 预览后继续对话修改
-  - 规则层 + LLM 灰区判定
-  - 输出契约、失败兜底、基础评测
+  - 一句话输入直接生成预览
+  - 预览后继续对话修改（本地语义调参或重生成）
+  - 极简状态机管理
+  - L1/L2 兜底策略（确保预览可见）
+  - 输出契约、基础评测与超时
 
-- **刻意暂缓**
+- **刻意暂缓/废弃**
+  - 反问澄清层（根据反馈已废弃，直接出预览）
   - 代码级 diff/patch 修改（中期能力）
   - 真正的自动修复多轮闭环（目前只做一次失败兜底）
   - 埋点平台接入（当前只保留 timing 与前端状态）

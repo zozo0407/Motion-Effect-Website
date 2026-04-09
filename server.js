@@ -3,6 +3,14 @@ const bodyParser = require('body-parser');
 const fs = require('fs');
 const path = require('path');
 const cors = require('cors');
+const {
+    buildBlueprintMessages,
+    buildCodeMessages,
+    defaultBlueprint,
+    parseBlueprintResponse
+} = require('./tools/creator/effect-blueprint.cjs');
+const { getAIProvidersFromEnv, normalizeAIBaseUrl } = require('./tools/creator/ai-providers.cjs');
+const { shouldUseBlueprintStage } = require('./tools/creator/generation-config.cjs');
 require('dotenv').config();
 
 const app = express();
@@ -24,56 +32,144 @@ async function generateEffectV2FromPrompt(prompt, apiKey, baseUrl, model) {
         }
     };
 
-    const systemPromptTemplate = read('v2-prompt.md');
-    const systemPrompt = systemPromptTemplate.split('{{USER_PROMPT}}').join(prompt);
-    
-    const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 180000);
-    
-    const res = await fetch(`${baseUrl}/chat/completions`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${apiKey}` },
-        body: JSON.stringify({
-            model,
-            messages: [{ role: 'system', content: systemPrompt }, { role: 'user', content: prompt }],
-            temperature: 0.6 // Balanced temperature for creativity and structure
-        }),
-        signal: controller.signal
-    });
-    
-    clearTimeout(timeoutId);
-    
-    if (!res.ok) {
-        const errText = await res.text();
-        throw new Error(`Generation failed: ${res.status} ${errText}`);
+    const contract = read('engine-contract.md');
+    const url = `${baseUrl}/chat/completions`;
+    let blueprint = defaultBlueprint(prompt);
+    if (shouldUseBlueprintStage(process.env)) {
+        const blueprintMessages = buildBlueprintMessages(prompt);
+        try {
+            const blueprintRes = await runV2Stage({
+                stage: 'blueprint',
+                url,
+                apiKey,
+                model,
+                messages: [
+                    { role: 'system', content: blueprintMessages.system },
+                    { role: 'user', content: blueprintMessages.user }
+                ],
+                temperature: 0.3,
+                maxTokens: 1024,
+                timeoutMs: 25000
+            });
+
+            if (!blueprintRes.ok) {
+                const errText = await blueprintRes.text();
+                throw new Error(`Generation failed: ${blueprintRes.status} ${errText}`);
+            }
+
+            const blueprintData = await blueprintRes.json();
+            const blueprintMsg = blueprintData && blueprintData.choices && blueprintData.choices[0] && blueprintData.choices[0].message;
+            const blueprintContent = (blueprintMsg && (blueprintMsg.content || blueprintMsg.reasoning_content)) || '';
+            blueprint = parseBlueprintResponse(blueprintContent);
+        } catch (e) {
+            const msg = String((e && e.message) || e || '');
+            console.log(`[v2][blueprint] fallback due to error: ${msg}`);
+        }
+    } else {
+        console.log('[v2][blueprint] skipped (AI_ENABLE_BLUEPRINT not enabled)');
     }
-    
-    const data = await res.json();
-    const finalCodeContent = (data && data.choices && data.choices[0] && data.choices[0].message && data.choices[0].message.content) || '';
 
-    let generatedCode = stripMarkdownCodeFence(finalCodeContent).trim();
+    const codeMessages = buildCodeMessages(prompt, blueprint, contract);
+    const codeRes = await runV2Stage({
+        stage: 'code',
+        url,
+        apiKey,
+        model,
+        messages: [
+            { role: 'system', content: codeMessages.system },
+            { role: 'user', content: codeMessages.user }
+        ],
+        temperature: 0.5,
+        maxTokens: 8192,
+        timeoutMs: 180000
+    });
+
+    if (!codeRes.ok) {
+        const errText = await codeRes.text();
+        throw new Error(`Generation failed: ${codeRes.status} ${errText}`);
+    }
+
+    const data = await codeRes.json();
+    const msg = data && data.choices && data.choices[0] && data.choices[0].message;
+    const finalCodeContent = (msg && (msg.content || msg.reasoning_content)) || '';
+ 
+    let generatedCode = stripModelNonCodePrologue(stripMarkdownCodeFence(finalCodeContent)).trim();
     generatedCode = normalizeThreeNamespaceImport(generatedCode);
-
+ 
     return generatedCode;
 }
 
-function normalizeAIBaseUrl(baseUrl) {
-    const raw = typeof baseUrl === 'string' ? baseUrl.trim() : '';
-    if (!raw) return 'https://api.openai.com/v1';
-    const noTrailingSlash = raw.replace(/\/+$/, '');
-    if (/\/v\d+(\/|$)/i.test(noTrailingSlash)) return noTrailingSlash;
-    return `${noTrailingSlash}/v1`;
+async function repairEngineEffectCode({ prompt, badCode, error, apiKey, baseUrl, model }) {
+    const read = (f) => {
+        try {
+            return fs.readFileSync(path.join(PROMPTS_DIR, f), 'utf8');
+        } catch (_) {
+            return '';
+        }
+    };
+
+    const contract = read('engine-contract.md');
+    const system = [
+        '你是 Three.js/WebGL 专家。你只输出“可直接执行的 ES Module 纯代码”，不要任何解释，不要 markdown code fence。',
+        '必须满足 EngineEffect 合约：第一行 import * as THREE from \'three\'; 并 export default class EngineEffect，包含 constructor/onStart/onUpdate/onResize/onDestroy/getUIConfig/setParam。',
+        '如需容器只能使用 ctx.container；渲染必须使用 ctx.canvas/ctx.gl（如存在），禁止使用 ctx.renderer。',
+        '严禁 requestAnimationFrame；渲染只能在 onUpdate(ctx) 内由外部驱动。',
+        contract ? `合约参考：\n${contract}` : ''
+    ].filter(Boolean).join('\n\n');
+
+    const user = [
+        `用户需求：${prompt}`,
+        `上一次输出的校验错误：${error}`,
+        '上一次输出（需要你修复为合规版本）：',
+        badCode
+    ].join('\n\n');
+
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 180000);
+
+    try {
+        const url = `${baseUrl}/chat/completions`;
+        const res = await fetchWithRetry(url, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${apiKey}` },
+            body: JSON.stringify({
+                model,
+                stream: false,
+                messages: [{ role: 'system', content: system }, { role: 'user', content: user }],
+                temperature: 0,
+                max_tokens: 8192
+            }),
+            signal: controller.signal
+        }, { retries: 0, baseDelayMs: 400 });
+
+        if (!res.ok) {
+            const errText = await res.text();
+            throw new Error(`Repair failed: ${res.status} ${errText}`);
+        }
+
+        const data = await res.json();
+        const msg = data && data.choices && data.choices[0] && data.choices[0].message;
+        const content = (msg && (msg.content || msg.reasoning_content)) || '';
+        let repaired = stripModelNonCodePrologue(stripMarkdownCodeFence(content)).trim();
+        repaired = normalizeThreeNamespaceImport(repaired);
+        return repaired;
+    } finally {
+        clearTimeout(timeoutId);
+    }
 }
 
 function getAIConfig() {
+    const providers = getAIProvidersFromEnv(process.env);
+    if (providers.length > 0) {
+        const first = providers[0];
+        return {
+            apiKey: first.apiKey,
+            baseUrl: first.baseUrl,
+            model: first.model
+        };
+    }
     const apiKey = process.env.AI_API_KEY || process.env.OPENAI_API_KEY;
-    const baseUrlRaw =
-        process.env.AI_BASE_URL ||
-
-        process.env.OPENAI_BASE_URL ||
-
-        process.env.OPENAI_API_BASE ||
-        'https://api.openai.com/v1';
+    const baseUrlRaw = process.env.AI_BASE_URL || process.env.OPENAI_BASE_URL || process.env.OPENAI_API_BASE || 'https://api.openai.com/v1';
     const model = process.env.AI_MODEL || process.env.OPENAI_MODEL || 'gpt-4o';
     return {
         apiKey,
@@ -82,12 +178,119 @@ function getAIConfig() {
     };
 }
 
+async function runWithProviderFallback(providers, runner) {
+    let lastErr = null;
+    for (const provider of providers) {
+        try {
+            return await runner(provider);
+        } catch (error) {
+            lastErr = error;
+            console.warn(`[ai-provider:${provider.label}] failed:`, error && error.message ? error.message : String(error));
+        }
+    }
+    throw lastErr || new Error('No AI providers available');
+}
+
 const PROMPTS_DIR = path.join(__dirname, 'prompts');
 const TEMP_PREVIEWS_DIR = path.join(__dirname, '.temp_previews');
 
 // Ensure temp directory exists
 if (!fs.existsSync(TEMP_PREVIEWS_DIR)) {
     fs.mkdirSync(TEMP_PREVIEWS_DIR, { recursive: true });
+}
+
+function sleep(ms) {
+    return new Promise(resolve => setTimeout(resolve, ms));
+}
+
+function sleepWithSignal(ms, signal) {
+    if (!signal) return sleep(ms);
+    return new Promise((resolve, reject) => {
+        const timeoutId = setTimeout(resolve, ms);
+        const onAbort = () => {
+            clearTimeout(timeoutId);
+            const err = new Error('aborted');
+            err.name = 'AbortError';
+            reject(err);
+        };
+        if (signal.aborted) return onAbort();
+        signal.addEventListener('abort', onAbort, { once: true });
+    });
+}
+
+async function fetchWithRetry(url, options, retryOptions) {
+    const retries = (retryOptions && Number.isFinite(retryOptions.retries)) ? retryOptions.retries : 2;
+    const baseDelayMs = (retryOptions && Number.isFinite(retryOptions.baseDelayMs)) ? retryOptions.baseDelayMs : 300;
+    let lastErr = null;
+    for (let attempt = 0; attempt <= retries; attempt += 1) {
+        try {
+            const res = await fetch(url, options);
+
+            if ((res.status === 429 || res.status === 529) && attempt < retries) {
+                const retryAfter = res.headers && typeof res.headers.get === 'function' ? res.headers.get('retry-after') : null;
+                const retryAfterSeconds = retryAfter ? parseInt(String(retryAfter), 10) : NaN;
+                const waitMs = Number.isFinite(retryAfterSeconds)
+                    ? retryAfterSeconds * 1000
+                    : baseDelayMs * Math.pow(2, attempt) + Math.floor(Math.random() * 1000);
+                console.log(`[fetchWithRetry] ${res.status} 服务过载，${waitMs}ms 后重试 (${attempt + 1}/${retries})`);
+                await sleepWithSignal(waitMs, options && options.signal);
+                continue;
+            }
+
+            if (res.status >= 500 && res.status < 600 && attempt < retries) {
+                const waitMs = baseDelayMs * Math.pow(2, attempt) + Math.floor(Math.random() * 500);
+                console.log(`[fetchWithRetry] ${res.status} 服务端错误，${waitMs}ms 后重试 (${attempt + 1}/${retries})`);
+                await sleepWithSignal(waitMs, options && options.signal);
+                continue;
+            }
+
+            return res;
+        } catch (e) {
+            lastErr = e;
+            if (e && e.name === 'AbortError') throw e;
+            const msg = String((e && e.message) || '');
+            const isFetchFailed = e && e.name === 'TypeError' && /fetch failed/i.test(msg);
+            if (!isFetchFailed || attempt === retries) throw e;
+            const jitter = Math.floor(Math.random() * 200);
+            await sleepWithSignal(baseDelayMs * (attempt + 1) + jitter, options && options.signal);
+        }
+    }
+    throw lastErr || new Error('fetch failed');
+}
+
+async function runV2Stage({ stage, url, apiKey, model, messages, temperature, maxTokens, timeoutMs }) {
+    const startedAt = Date.now();
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(new Error(`${stage} timeout`)), timeoutMs);
+    console.log(`[v2][${stage}] start`);
+    try {
+        const res = await fetchWithRetry(url, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${apiKey}` },
+            body: JSON.stringify({
+                model,
+                stream: false,
+                messages,
+                temperature,
+                max_tokens: maxTokens
+            }),
+            signal: controller.signal
+        }, { retries: 2, baseDelayMs: 400 });
+        const elapsedMs = Date.now() - startedAt;
+        console.log(`[v2][${stage}] response status=${res.status} elapsedMs=${elapsedMs}`);
+        return res;
+    } catch (e) {
+        const elapsedMs = Date.now() - startedAt;
+        const message = String((e && e.message) || e || 'unknown error');
+        if (e && e.name === 'AbortError') {
+            console.error(`[v2][${stage}] timeout elapsedMs=${elapsedMs} timeoutMs=${timeoutMs}`);
+            throw new Error(`V2 ${stage} stage timeout after ${timeoutMs}ms`);
+        }
+        console.error(`[v2][${stage}] error elapsedMs=${elapsedMs} message=${message}`);
+        throw e;
+    } finally {
+        clearTimeout(timeoutId);
+    }
 }
 
 async function classifyStyle(prompt, apiKey, baseUrl, model) {
@@ -102,26 +305,30 @@ Reply ONLY with the style name.`;
     try {
         const controller = new AbortController();
         const timeoutId = setTimeout(() => controller.abort(), 15000);
-        const response = await fetch(`${baseUrl}/chat/completions`, {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/json',
-                'Authorization': `Bearer ${apiKey}`
-            },
-            body: JSON.stringify({
-                model,
-                messages: [
-                    { role: 'system', content: sysPrompt },
-                    { role: 'user', content: prompt }
-                ],
-                temperature: 0.1,
-                max_tokens: 10
-            }),
-            signal: controller.signal
-        });
-        clearTimeout(timeoutId);
-        
-        const data = await response.json();
+        let response;
+        let data = null;
+        try {
+            response = await fetchWithRetry(`${baseUrl}/chat/completions`, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'Authorization': `Bearer ${apiKey}`
+                },
+                body: JSON.stringify({
+                    model,
+                    messages: [
+                        { role: 'system', content: sysPrompt },
+                        { role: 'user', content: prompt }
+                    ],
+                    temperature: 0.1,
+                    max_tokens: 10
+                }),
+                signal: controller.signal
+            }, { retries: 1, baseDelayMs: 200 });
+            data = await response.json();
+        } finally {
+            clearTimeout(timeoutId);
+        }
         if (data && data.choices && data.choices[0] && data.choices[0].message) {
             const style = data.choices[0].message.content.trim().toLowerCase();
             const validStyles = ['cyberpunk', 'toon', 'minimalist', 'realistic'];
@@ -169,6 +376,18 @@ function stripMarkdownCodeFence(text) {
     let m = text.match(/```[a-zA-Z0-9_-]*\s*\n([\s\S]*?)\n```/);
     let code = m ? m[1] : text;
     return code;
+}
+
+function stripModelNonCodePrologue(text) {
+    let s = typeof text === 'string' ? text : '';
+    s = s.replace(/^\s*<think>[\s\S]*?<\/think>\s*/i, '');
+    const importMatch = s.match(/^\s*import\s/m);
+    const exportMatch = s.match(/^\s*export\s+default\s+class\s+EngineEffect\b/m);
+    const importIdx = importMatch ? (importMatch.index || 0) : -1;
+    const exportIdx = exportMatch ? (exportMatch.index || 0) : -1;
+    const cutIdx = importIdx >= 0 ? importIdx : (exportIdx >= 0 ? exportIdx : 0);
+    if (cutIdx > 0) s = s.slice(cutIdx);
+    return s.trim();
 }
 
 function normalizeThreeNamespaceImport(codeText) {
@@ -582,7 +801,17 @@ export default class EngineEffect {
 
     try {
         if (req && req.query && String(req.query.v || '') === '2') {
-            const generatedCode = await generateEffectV2FromPrompt(prompt, apiKey, baseUrl, model);
+            let generatedCode = await generateEffectV2FromPrompt(prompt, apiKey, baseUrl, model);
+            generatedCode = autoFixEngineEffectCode(generatedCode);
+            let scanErr = validateEngineEffectCode(generatedCode);
+            if (scanErr) {
+                console.log(`[v2][generate] Validation failed: ${scanErr}, attempting repair...`);
+                const repaired = await repairEngineEffectCode({ prompt, badCode: generatedCode, error: scanErr, apiKey, baseUrl, model });
+                const repairedFixed = autoFixEngineEffectCode(repaired);
+                scanErr = validateEngineEffectCode(repairedFixed);
+                if (scanErr) return res.status(502).json({ error: `AI 输出不符合 EngineEffect 合约：${scanErr}` });
+                return res.json({ code: repairedFixed });
+            }
             return res.json({ code: generatedCode });
         }
         const style = await classifyStyle(prompt, apiKey, baseUrl, model);
@@ -590,25 +819,31 @@ export default class EngineEffect {
 
         const controller = new AbortController();
         const timeoutId = setTimeout(() => controller.abort(), 180000);
-        const response = await fetch(`${baseUrl}/chat/completions`, {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/json',
-                'Authorization': `Bearer ${apiKey}`
-            },
-            body: JSON.stringify({
-                model,
-                messages: [
-                    { role: 'system', content: systemPrompt },
-                    { role: 'user', content: prompt }
-                ],
-                temperature: 0.7
-            }),
-            signal: controller.signal
-        });
-        clearTimeout(timeoutId);
+        let response;
+        let raw = '';
+        try {
+            response = await fetchWithRetry(`${baseUrl}/chat/completions`, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'Authorization': `Bearer ${apiKey}`
+                },
+                body: JSON.stringify({
+                    model,
+                    messages: [
+                        { role: 'system', content: systemPrompt },
+                        { role: 'user', content: prompt }
+                    ],
+                    temperature: 0.7,
+                    max_tokens: 8192
+                }),
+                signal: controller.signal
+            }, { retries: 2, baseDelayMs: 400 });
 
-        const raw = await response.text();
+            raw = await response.text();
+        } finally {
+            clearTimeout(timeoutId);
+        }
         let data = null;
         try {
             data = JSON.parse(raw);
@@ -628,13 +863,41 @@ export default class EngineEffect {
             return res.status(502).json({ error: 'Upstream AI response is empty or invalid' });
         }
 
-        let generatedCode = stripMarkdownCodeFence(content).trim();
+        let generatedCode = stripModelNonCodePrologue(stripMarkdownCodeFence(content)).trim();
         generatedCode = normalizeThreeNamespaceImport(generatedCode);
 
+        const scanErr = validateEngineEffectCode(generatedCode);
+        if (scanErr) return res.status(502).json({ error: `AI 输出不符合 EngineEffect 合约：${scanErr}` });
         res.json({ code: generatedCode });
 
     } catch (error) {
-        console.error('Generate effect failed:', error && error.message ? error.message : 'Unknown error');
+        const msg = String((error && error.message) || '');
+        const isFetchFailed = error && error.name === 'TypeError' && /fetch failed/i.test(msg);
+        if (isFetchFailed) {
+            console.error('Generate effect failed: upstream fetch failed', { baseUrl, model });
+            res.status(502).json({ error: '上游 AI 网络请求失败（fetch failed），请稍后重试' });
+            return;
+        }
+        const genFailed = msg.match(/^Generation failed:\s*(\d{3})\s*([\s\S]*)$/);
+        if (genFailed) {
+            const status = parseInt(genFailed[1], 10);
+            const bodyText = String(genFailed[2] || '').trim();
+            let detail = '';
+            try {
+                const parsed = JSON.parse(bodyText);
+                detail =
+                    (parsed && parsed.error && typeof parsed.error.message === 'string' && parsed.error.message) ||
+                    (parsed && typeof parsed.error === 'string' && parsed.error) ||
+                    '';
+            } catch (_) {
+                detail = '';
+            }
+            const safeStatus = Number.isFinite(status) && status >= 400 && status <= 599 ? status : 502;
+            const message = detail || (bodyText ? bodyText : `Upstream AI request failed (${safeStatus})`);
+            res.status(safeStatus).json({ error: message });
+            return;
+        }
+        console.error('Generate effect failed:', msg || 'Unknown error');
         if (error && (error.name === 'AbortError' || /aborted/i.test(String(error.message || '')))) {
             res.status(504).json({ error: 'Upstream AI request timed out' });
             return;
@@ -657,14 +920,82 @@ function basicSyntaxScan(code) {
     return null;
 }
 
+function normalizeEngineEffectExport(code) {
+    if (typeof code !== 'string') return code;
+    let s = code;
+    if (/export\s+default\s+class\s+EngineEffect\b/.test(s)) return s;
+    if (/export\s+default\s+EngineEffect\b/.test(s) && /\bclass\s+EngineEffect\b/.test(s)) {
+        s = s.replace(/\bexport\s+default\s+EngineEffect\s*;?\s*/g, '');
+        s = s.replace(/\bclass\s+EngineEffect\b/, 'export default class EngineEffect');
+        if (/export\s+default\s+class\s+EngineEffect\b/.test(s)) return s;
+    }
+    s = s.replace(/\bexport\s+class\s+EngineEffect\b/g, 'export default class EngineEffect');
+    if (/export\s+default\s+class\s+EngineEffect\b/.test(s)) return s;
+    s = s.replace(/(^|\n)\s*class\s+EngineEffect\b/m, '$1export default class EngineEffect');
+    return s;
+}
+
+function autoFixEngineEffectCode(code) {
+    if (typeof code !== 'string' || !code.trim()) return code;
+    code = normalizeEngineEffectExport(code);
+    if (!/export\s+default\s+class\s+EngineEffect/.test(code)) return code;
+    if (/setParam\s*\(/.test(code)) return code;
+    const insertion = `
+
+    setParam(key, value) {
+        this.params = this.params || {};
+        this.params[key] = value;
+
+        if (this.material && this.material.uniforms) {
+            const name = 'u' + String(key || '').charAt(0).toUpperCase() + String(key || '').slice(1);
+            const u = this.material.uniforms[name];
+            if (u && u.value && typeof u.value.set === 'function' && typeof value === 'string') {
+                u.value.set(value);
+            } else if (u && Object.prototype.hasOwnProperty.call(u, 'value')) {
+                u.value = value;
+            }
+        }
+
+        if (this.material && this.material.color && typeof this.material.color.set === 'function' && typeof value === 'string') {
+            this.material.color.set(value);
+        }
+    }
+`;
+    if (/\bonStart\s*\(/.test(code)) {
+        return code.replace(/\n(\s*)onStart\s*\(/, `${insertion}\n$1onStart(`);
+    }
+    return code.replace(/\n(\s*)onUpdate\s*\(/, `${insertion}\n$1onUpdate(`);
+}
+
+function validateEngineEffectCode(code) {
+    const err = basicSyntaxScan(code);
+    if (err) return err;
+    if (!/\bonStart\s*\(/.test(code)) return 'Missing onStart(ctx)';
+    if (!/\bonUpdate\s*\(/.test(code)) return 'Missing onUpdate(ctx)';
+    const openBraces = (String(code).match(/\{/g) || []).length;
+    const closeBraces = (String(code).match(/\}/g) || []).length;
+    if (closeBraces < openBraces) return '代码疑似被截断（大括号不闭合）';
+    const ctor = String(code).match(/\bconstructor\s*\(([^)]*)\)/);
+    if (ctor && ctor[1] && ctor[1].trim()) return 'constructor() 不应接收任何参数（外部会以 new EngineEffect() 方式实例化）';
+    if (/\bclass\s+ScriptScene\b/.test(code)) return '检测到 ScriptScene（应输出 EngineEffect）';
+    if (/\bctx\.renderer\b/.test(code)) return '检测到 ctx.renderer（预览引擎不会注入 renderer，请在 onStart(ctx) 内使用 ctx.canvas/ctx.gl 自行创建 THREE.WebGLRenderer）';
+    if (/\brequestAnimationFrame\s*\(/.test(code)) return '检测到 requestAnimationFrame（禁止使用，渲染应由 onUpdate 驱动）';
+    return null;
+}
+
 app.post('/api/generate-effect-v2', async (req, res) => {
     const body = req.body && typeof req.body === 'object' ? req.body : {};
     const prompt = typeof body.prompt === 'string' ? body.prompt : '';
     if (!prompt.trim()) return res.status(400).json({ error: 'Prompt is required' });
-    const { apiKey, baseUrl, model } = getAIConfig();
-    if (!apiKey) return res.status(400).json({ error: 'Missing AI_API_KEY' });
+    const providers = getAIProvidersFromEnv(process.env);
+    if (!providers.length) return res.status(400).json({ error: 'Missing AI_PRIMARY_API_KEY' });
     try {
-        const generatedCode = await generateEffectV2FromPrompt(prompt, apiKey, baseUrl, model);
+        let generatedCode = await runWithProviderFallback(providers, async (provider) => {
+            return generateEffectV2FromPrompt(prompt, provider.apiKey, provider.baseUrl, provider.model);
+        });
+        generatedCode = autoFixEngineEffectCode(generatedCode);
+        const scanErr = validateEngineEffectCode(generatedCode);
+        if (scanErr) return res.status(502).json({ error: `AI 输出不符合 EngineEffect 合约：${scanErr}` });
         res.json({ code: generatedCode });
     } catch (e) {
         console.error('Two-step generation failed:', e);

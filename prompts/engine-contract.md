@@ -4,7 +4,7 @@
 1. **导出结构**：必须 `export default class EngineEffect`。
 2. **生命周期**：
    - `constructor()`: 仅初始化变量（不要碰 DOM）。
-   - `onStart(ctx)`: 初始化场景。使用 `ctx.size.width/height/dpr`。如果有 `ctx.canvas` 或 `ctx.gl` 请传入 Renderer 配置。背景建议设为高级的深色或透明 `alpha: true`。
+   - `onStart(ctx)`: 初始化场景。使用 `ctx.size.width/height/dpr`。渲染必须使用外部注入的 `ctx.canvas/ctx.gl`（如存在）；如需要挂载节点，只能使用 `ctx.container`（如存在），禁止使用 `document/window/navigator`。
    - `onUpdate(ctx)`: 外部每帧调用（包含 `ctx.time`, `ctx.deltaTime`）。**绝对禁止在内部使用 requestAnimationFrame**。
    - `onResize(size)`: 更新相机 aspect 和 renderer size。注意规避 onStart 未完成时的 null 报错。
    - `onDestroy()`: 必须彻底清理 geometry, material, renderer 等内存。
@@ -20,6 +20,8 @@
    - **只返回纯代码**，绝对不要用 markdown 的 ```javascript ``` 等包裹，也不要任何解释文本。直接输出可执行的 JS 代码。
    - 保持自包含（Self-contained），**不请求外部图片或贴图**，所有纹理必须用 Canvas API 动态生成或使用 Shader 计算。
    - 始终使用 `THREE.` 命名空间。
+   - 禁止使用 `ctx.renderer`（预览引擎不会注入 renderer；请在 onStart(ctx) 内用 ctx.canvas/ctx.gl 自行创建 THREE.WebGLRenderer）。
+   - 禁止出现 `document.` / `window.` / `navigator.`（包括但不限于 querySelector/getElementById/createElement/body/appendChild 等）。不要自己创建 canvas，不要把 renderer.domElement append 到 document 上。
 
 ---
 

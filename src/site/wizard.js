@@ -60,19 +60,34 @@ const templates = {
 };
 
 const AI_RANDOM_PROMPTS = [
-    "赛博朋克风格的旋转立方体，带有霓虹发光边缘，背景是流动的数据流，深蓝色调，金属质感。",
-    "金色的液体球体在空中漂浮，表面有波纹动画，高光反射，极简主义风格，白色背景。",
-    "由成千上万个粒子组成的漩涡，跟随鼠标移动，色彩斑斓，发光效果，具有动感的拖尾。",
-    "复古波风格的网格地面，远处的紫色太阳缓缓落下，带有扫描线效果，80年代风格。",
-    "透明的水晶材质球体，内部有复杂的几何结构旋转，焦散效果，柔和的光照。"
+    "一个由无数微小发光粒子组成的星系漩涡，粒子随时间缓慢旋转并呈现紫到蓝的渐变色。整体具有深邃的宇宙感，纯靠数学函数驱动粒子的运动与呼吸闪烁。",
+    "中心是一个巨大的低多边形（Low-Poly）地形，表面使用线框材质（Wireframe）并散发着荧光绿色的光芒。地形像海浪一样有节奏地起伏，极具复古科幻与赛博朋克感。",
+    "一个复杂的嵌套几何体，外层是缓慢旋转的透明玻璃质感二十面体，内层是一个反向旋转的金色发光圆环。场景中带有柔和的点光源照明，让玻璃材质折射出高级的物理光泽。",
+    "一条无限延伸的3D光速隧道，由无数个发光圆环组成，镜头仿佛在隧道中高速穿梭。圆环的颜色在红黄蓝之间循环渐变，营造出强烈的视觉冲击力。",
+    "一组漂浮在空中的金属质感方块阵列，它们像呼吸一样有节奏地上下浮动。场景使用PBR物理材质，配合主光源和边缘补光，展现出极其细腻的光影对比。",
+    "一个梦幻般的莫比乌斯环（TorusKnot），表面覆盖着流动的彩虹色材质。它在屏幕中央优雅地自转，背景纯净，模型表面呈现水波纹般的色彩流动。",
+    "无数根细长的霓虹光线在空间中交织，形成一个动态的DNA双螺旋结构。整体色调以青色和洋红为主，给人一种强烈的未来生物科技感。",
+    "一个极简的高级感展示台：中心是一个悬浮的哑光纯色球体，下方是一个光滑的镜面底座。顶部有柔和的光源打下，球体投下清晰的阴影，画面纯净、克制。",
+    "一个充满科幻感的全息投影地球仪，由成千上万的青色数据点阵构成。球体缓慢自转，表面不时有高亮的数据流划过，背景是极深的暗蓝色。",
+    "微观世界下的分形几何体（Mandelbulb），表面覆盖着金属拉丝材质。随着时间的推移，它的形态发生诡异而美丽的扭曲，打着对比强烈的粉蓝双色光。",
+    "一个动态的水波纹平面，上面漂浮着几个不同大小的磨砂玻璃球。玻璃球不仅会反射水面的波纹，自身也会随波浪轻轻起伏，营造出一种宁静的禅意。",
+    "充满活力的抽象几何流体，像是漂浮在空中的熔岩灯。形态不断地融合与分裂，材质使用高度反光的电镀金属，反射出周围环境的幻彩光芒。",
+    "一个复古游戏风格的像素化（Voxel）爱心，它在中心以极富弹性的节奏跳动。材质呈现出8-bit时代的鲜艳色彩，并伴随着轻微的抖动发光特效。",
+    "由无数个微小三棱锥排列成的巨大球体外壳，每个三棱锥都在独立地自转。当摄像机缓慢推进时，可以穿过外壳看到内部耀眼的核心光源。",
+    "一个充满赛博朋克风的动态均衡器，由多根垂直的发光柱组成。柱子的高度随时间呈波浪状随机起伏，底部是深紫色的网格地面，充满未来电子感。",
+    "高级珠宝展示：一枚切割完美的钻石漂浮在空中，缓慢旋转。使用极其逼真的折射材质和环境光映射（HDRI），让钻石折射出令人惊叹的火彩。",
+    "一条由发光粒子组成的丝带，像丝绸一样在空中优雅地舞动。粒子的颜色随着轨迹的延伸从暖橙色渐变到冷青色，留下美丽的光轨。",
+    "一个巨大的低多边形水晶洞穴，内部有几个发光的水晶簇。摄像机缓慢地在水晶之间穿梭游历，水晶材质半透明且带有神秘的内部自发光。",
+    "极具机械感的齿轮传动系统，由多个黄铜和精钢材质的齿轮互相咬合旋转。材质上有细腻的金属划痕，打着温暖的复古钨丝灯光照。",
+    "一个由无数白色细线组成的动态声波球，线条像刺猬的刺一样向外延伸并随时间收缩。背景纯黑，线条末端带有微弱的荧光，极简而充满张力。"
 ];
 
 const AI_ENHANCEMENTS = [
-    "，高质量渲染，4k分辨率，细节丰富",
-    "，具有发光效果，动态模糊，平滑过渡",
-    "，使用PBR材质，物理真实感，环境光遮蔽",
-    "，极简设计，柔和配色，高级感",
-    "，带有交互动画，跟随鼠标位置变化"
+    "，整体采用极简克制的设计风格，背景纯黑，突出主体的高级感。",
+    "，请为材质加入线框模式（wireframe）和自发光属性，增强科幻感。",
+    "，增加柔和的光影对比与物理材质（PBR），让质感更加真实细腻。",
+    "，让摄像机保持缓慢推近或环绕的动态效果，增强沉浸体验。",
+    "，颜色采用赛博朋克经典的霓虹粉与青色搭配，充满未来感。"
 ];
 
 export function initWizard({ openLab, prependDemo, generateAIHTML, generateTemplateHTML }) {
@@ -313,7 +328,10 @@ export function goToStep(step) {
         }
     });
 
-    document.querySelectorAll('.step-content').forEach(el => el.classList.add('hidden'));
+    document.querySelectorAll('.step-content').forEach(el => {
+        el.classList.add('hidden');
+        el.style.display = '';
+    });
     const targetContent = document.getElementById(`step-${step}-content`);
     if (targetContent) {
         targetContent.classList.remove('hidden');
@@ -401,19 +419,23 @@ export async function generateDemo() {
     if (currentTemplate === 'ai-custom') {
         try {
             const __ctrl = new AbortController();
-            const __timeoutMs = 180000;
+            const __timeoutMs = 240000;
             const __timeoutId = setTimeout(() => {
                 __ctrl.abort();
             }, __timeoutMs);
-            const res = await fetch(`${API_BASE}/generate-effect?v=2`, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ prompt: data.prompt }),
-                signal: __ctrl.signal
-            });
-            clearTimeout(__timeoutId);
-
-            const raw = await res.text();
+            let res;
+            let raw = '';
+            try {
+                res = await fetch(`${API_BASE}/generate-effect?v=2`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ prompt: data.prompt }),
+                    signal: __ctrl.signal
+                });
+                raw = await res.text();
+            } finally {
+                clearTimeout(__timeoutId);
+            }
             let json = null;
             try { json = JSON.parse(raw); } catch (_) { json = null; }
 

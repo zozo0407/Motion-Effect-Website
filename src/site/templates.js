@@ -362,7 +362,7 @@
       const threePath = origin + basePath + 'my-motion-portfolio/public/js/libs/three/three.module.js';
       const threeAddonsPath = origin + basePath + 'my-motion-portfolio/public/js/libs/three/addons/';
       
-      const safeCode = (typeof code === 'string' ? code : '').replace(/<\/script>/gi, '<\\/script>');
+      const safeCode = (typeof code === 'string' ? code : '').replace(/<\/script/gi, '<\\/script');
       let normalizedCode = safeCode;
       if (!/import\s+\*\s+as\s+THREE\s+from\s+['"]three['"]\s*;?/m.test(normalizedCode)) {
           const ns = normalizedCode.match(/import\s+\*\s+as\s+([A-Za-z_$][\w$]*)\s+from\s+['"]three['"]\s*;?/m);
@@ -382,6 +382,9 @@
               }
           }
       }
+      const jsonLiteral = JSON.stringify(normalizedCode)
+          .replace(/\u2028/g, '\\u2028')
+          .replace(/\u2029/g, '\\u2029');
       
       return `<!DOCTYPE html>
 <html lang="en">
@@ -402,7 +405,7 @@
 </head>
 <body>
     <script type="module">
- const __source = ${JSON.stringify(normalizedCode)};
+ const __source = ${jsonLiteral};
  const __blob = new Blob([__source], { type: 'application/javascript' });
  const __url = URL.createObjectURL(__blob);
    const __showError = (err) => {
@@ -468,7 +471,8 @@
    try {
      __resize();
      if (typeof __effect.onStart === 'function') {
-         __effect.onStart({ container: __container, canvas: __canvas, gl: null, size: __getSize() });
+         const __size = __getSize();
+         __effect.onStart({ container: __container, canvas: __canvas, gl: null, size: __size, ...__size });
      }
      __started = true;
      __resize();
@@ -523,7 +527,8 @@
      const time = now / 1000;
      try {
          if (typeof __effect.onUpdate === 'function') {
-             __effect.onUpdate({ time, deltaTime, size: __getSize() });
+             const __size = __getSize();
+             __effect.onUpdate({ time, deltaTime, size: __size, ...__size });
          }
      } catch (e) {
          cancelAnimationFrame(__raf);
