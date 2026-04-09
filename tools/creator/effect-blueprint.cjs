@@ -50,8 +50,48 @@ function extractFirstJsonObjectString(text) {
   return s.slice(start).trim();
 }
 
+function sanitizeJsonLikeNumbers(text) {
+  // Some models output JSON-ish numbers like `5.` which is invalid JSON.
+  // Fix only outside of strings: `(\d+)\.(\D)` -> `\1.0\2`
+  const s = typeof text === 'string' ? text : '';
+  let out = '';
+  let inString = false;
+  let escape = false;
+  for (let i = 0; i < s.length; i += 1) {
+    const ch = s[i];
+    if (inString) {
+      out += ch;
+      if (escape) {
+        escape = false;
+      } else if (ch === '\\') {
+        escape = true;
+      } else if (ch === '"') {
+        inString = false;
+      }
+      continue;
+    }
+    if (ch === '"') {
+      inString = true;
+      out += ch;
+      continue;
+    }
+    // Detect `5.` / `12.` patterns (outside strings) and patch to `5.0`.
+    if (ch === '.' && i > 0) {
+      const prev = s[i - 1];
+      const next = s[i + 1] || '';
+      if (prev >= '0' && prev <= '9' && !(next >= '0' && next <= '9')) {
+        out += '.0';
+        continue;
+      }
+    }
+    out += ch;
+  }
+  return out;
+}
+
 function parseBlueprintResponse(raw) {
-  const parsed = JSON.parse(extractFirstJsonObjectString(raw));
+  const jsonText = sanitizeJsonLikeNumbers(extractFirstJsonObjectString(raw));
+  const parsed = JSON.parse(jsonText);
   return {
     title: typeof parsed.title === 'string' ? parsed.title : 'Generated Effect',
     summary: typeof parsed.summary === 'string' ? parsed.summary : '',
