@@ -3,9 +3,8 @@ let injectedPrependDemo = null;
 let injectedGenerateAIHTML = null;
 let injectedGenerateTemplateHTML = null;
 
-const API_BASE = window.location.port === '3000'
-    ? '/api'
-    : `${window.location.protocol}//${window.location.hostname}:3000/api`;
+// Always use same-origin API in production; platforms like Render do not expose :3000 publicly.
+const API_BASE = '/api';
 
 let currentTemplate = null;
 let scriptSceneAutoIndex = 1;
@@ -426,7 +425,7 @@ export async function generateDemo() {
             let res;
             let raw = '';
             try {
-                res = await fetch(`${API_BASE}/generate-effect?v=2`, {
+                res = await fetch(`${API_BASE}/generate-effect-v2`, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({ prompt: data.prompt }),

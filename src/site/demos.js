@@ -4,9 +4,8 @@ let isStudioMode = false;
 let activeCategory = 'all';
 let activeSubCategory = 'all';
 
-const API_BASE = window.location.port === '3000'
-    ? '/api'
-    : `${window.location.protocol}//${window.location.hostname}:3000/api`;
+// Always use same-origin API in production; platforms like Render do not expose :3000 publicly.
+const API_BASE = '/api';
 
 const CORE_DEMOS_URL = 'my-motion-portfolio/public/data/demos.core.json';
 const ALL_DEMOS_URL = 'my-motion-portfolio/public/data/demos.json';
