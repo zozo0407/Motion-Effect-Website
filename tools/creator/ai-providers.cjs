@@ -38,7 +38,18 @@ function getAIProvidersFromEnv(env = process.env) {
     );
     if (fallback) providers.push(fallback);
 
-    if (providers.length > 0) return providers;
+    if (providers.length > 0) {
+        // Prefer "fast" providers first for interactive generation. Commonly the fallback
+        // is a highspeed model; keep behavior deterministic and opt-in by convention.
+        if (fallback && /highspeed/i.test(String(fallback.model || ''))) {
+            return providers.slice().sort((a, b) => {
+                const aFast = a.label === 'fallback' ? 0 : 1;
+                const bFast = b.label === 'fallback' ? 0 : 1;
+                return aFast - bFast;
+            });
+        }
+        return providers;
+    }
 
     const legacy = buildProvider(
         'legacy',

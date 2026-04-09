@@ -361,7 +361,16 @@ export async function generateDemo() {
     let progressInterval;
 
     const startSimulatedProgress = () => {
+        const MAX_WAIT_MS = 180000; // 3 minutes
+        const startTime = Date.now();
+
         progressInterval = setInterval(() => {
+            const elapsed = Date.now() - startTime;
+            const remainingSec = Math.max(0, Math.ceil((MAX_WAIT_MS - elapsed) / 1000));
+            const mm = String(Math.floor(remainingSec / 60)).padStart(2, '0');
+            const ss = String(remainingSec % 60).padStart(2, '0');
+            const countdownStr = `剩余 ${mm}:${ss}（最多 03:00）`;
+
             if (progress < 90) {
                 const increment = progress < 30 ? Math.random() * 5 :
                     progress < 60 ? Math.random() * 2 :
@@ -371,14 +380,14 @@ export async function generateDemo() {
 
                 if (progressBar) progressBar.style.width = `${progress}%`;
                 if (progressText) progressText.innerText = `${Math.floor(progress)}%`;
+            }
 
-                if (logs) {
-                    if (progress < 20) logs.innerText = '> 正在解析提示词语义并提取关键特征...';
-                    else if (progress < 40) logs.innerText = '> 正在构建基础三维场景拓扑结构...';
-                    else if (progress < 70) logs.innerText = '> AI 核心正在编写并优化 WebGL 着色器代码...';
-                    else if (progress < 85) logs.innerText = '> 正在合成 PBR 材质与全局光照参数...';
-                    else logs.innerText = '> 正在校验代码并准备注入 UnifiedRenderer 引擎...';
-                }
+            if (logs) {
+                if (progress < 20) logs.innerText = `> 正在解析提示词语义并提取关键特征...\n> ${countdownStr}`;
+                else if (progress < 40) logs.innerText = `> 正在构建基础三维场景拓扑结构...\n> ${countdownStr}`;
+                else if (progress < 70) logs.innerText = `> AI 核心正在编写并优化 WebGL 着色器代码...\n> ${countdownStr}`;
+                else if (progress < 85) logs.innerText = `> 正在合成 PBR 材质与全局光照参数...\n> ${countdownStr}`;
+                else logs.innerText = `> 正在校验代码并准备注入 UnifiedRenderer 引擎...\n> ${countdownStr}`;
             }
         }, 200);
     };
@@ -418,7 +427,7 @@ export async function generateDemo() {
     if (currentTemplate === 'ai-custom') {
         try {
             const __ctrl = new AbortController();
-            const __timeoutMs = 240000;
+            const __timeoutMs = 180000; // 3 minutes timeout to match the countdown
             const __timeoutId = setTimeout(() => {
                 __ctrl.abort();
             }, __timeoutMs);
@@ -452,8 +461,99 @@ export async function generateDemo() {
             finishProgress();
         } catch (e) {
             const isAbort = e && (e.name === 'AbortError' || /aborted/i.test(String(e.message || '')));
-            showCompileError(isAbort ? '生成超时，请重试' : (e && e.message ? e.message : String(e)));
-            return;
+            const errorReason = isAbort ? '生成超时，网络可能拥堵' : (e && e.message ? e.message : String(e));
+            
+            // 降级兜底方案：显示失败提示，但继续使用内置默认骨架代码渲染
+            if (logs) {
+                logs.innerText = `> 🚨 AI 生成失败: ${errorReason}\n> 💡 为您加载内置兜底效果进行预览...`;
+                logs.style.color = '#ef4444'; // red-500
+            }
+            
+            const fallbackCode = `import * as THREE from 'three';
+
+export default class EngineEffect {
+    constructor() {
+        this.scene = null;
+        this.camera = null;
+        this.renderer = null;
+        this.group = null;
+    }
+
+    onStart(ctx) {
+        // Create our own scene/camera/renderer - preview runtime does not provide them in ctx
+        const width = Math.max(1, Math.floor((ctx && (ctx.width || (ctx.size && ctx.size.width))) || 800));
+        const height = Math.max(1, Math.floor((ctx && (ctx.height || (ctx.size && ctx.size.height))) || 600));
+        const dpr = Math.max(1, Math.min(2, (ctx && (ctx.dpr || (ctx.size && ctx.size.dpr))) || 1));
+
+        this.scene = new THREE.Scene();
+        this.camera = new THREE.PerspectiveCamera(55, width / height, 0.1, 100);
+        this.camera.position.set(0, 0, 6);
+
+        this.renderer = new THREE.WebGLRenderer({ canvas: ctx && ctx.canvas ? ctx.canvas : undefined, antialias: true });
+        this.renderer.setPixelRatio(dpr);
+        this.renderer.setSize(width, height, false);
+        this.renderer.setClearColor(0x0a0a1a, 1.0);
+
+        this.group = new THREE.Group();
+        this.scene.add(this.group);
+
+        const geo = new THREE.IcosahedronGeometry(1.6, 0);
+        const mat = new THREE.MeshStandardMaterial({
+            color: '#0ea5e9',
+            roughness: 0.35,
+            metalness: 0.2,
+            wireframe: true
+        });
+        const mesh = new THREE.Mesh(geo, mat);
+        this.group.add(mesh);
+
+        const ambient = new THREE.AmbientLight(0xffffff, 0.6);
+        const point = new THREE.PointLight(0x88ccff, 1.2);
+        point.position.set(5, 5, 5);
+        this.scene.add(ambient);
+        this.scene.add(point);
+    }
+
+    onUpdate(ctx) {
+        if (!this.renderer || !this.scene || !this.camera) return;
+        if (this.group) {
+            this.group.rotation.x += (ctx && ctx.deltaTime ? ctx.deltaTime : 0.016) * 0.5;
+            this.group.rotation.y += (ctx && ctx.deltaTime ? ctx.deltaTime : 0.016) * 0.3;
+        }
+        this.renderer.render(this.scene, this.camera);
+    }
+
+    onResize(size) {
+        if (!this.renderer || !this.camera) return;
+        const width = Math.max(1, Math.floor((size && size.width) || 800));
+        const height = Math.max(1, Math.floor((size && size.height) || 600));
+        const dpr = Math.max(1, Math.min(2, (size && size.dpr) || 1));
+        this.renderer.setPixelRatio(dpr);
+        this.renderer.setSize(width, height, false);
+        this.camera.aspect = width / height;
+        this.camera.updateProjectionMatrix();
+    }
+
+    onDestroy() {}
+    getUIConfig() { return []; }
+    setParam(key, value) {}
+}`
+            if (!injectedGenerateAIHTML) {
+                showCompileError(errorReason);
+                return;
+            }
+            
+            htmlContent = injectedGenerateAIHTML(fallbackCode);
+            // 改变一下进度条样式表示这是降级结果，但依然走完流程
+            if (progressBar) {
+                progressBar.style.width = '100%';
+                progressBar.style.backgroundColor = '#f59e0b'; // amber-500
+            }
+            if (progressText) {
+                progressText.innerText = '100% (降级兜底)';
+                progressText.style.color = '#f59e0b';
+            }
+            clearInterval(progressInterval);
         }
     } else {
         try {

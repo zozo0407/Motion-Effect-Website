@@ -958,8 +958,30 @@ function normalizeEngineEffectExport(code) {
 
 function autoFixEngineEffectCode(code) {
     if (typeof code !== 'string' || !code.trim()) return code;
+    code = stripModelNonCodePrologue(code);
+    code = normalizeThreeNamespaceImport(code);
     code = normalizeEngineEffectExport(code);
+
+    // If it doesn't look like EngineEffect at all, let the validator catch it.
     if (!/export\s+default\s+class\s+EngineEffect/.test(code)) return code;
+
+    // Minimum skeleton repair
+    if (!/\bonStart\s*\(/.test(code)) {
+        code = code.replace(/class\s+EngineEffect\s*(?:extends\s+[^{]+)?\s*\{/, "class EngineEffect {\n    onStart(ctx) {\n        const width = Math.max(1, Math.floor((ctx && (ctx.width || (ctx.size && ctx.size.width))) || 800));\n        const height = Math.max(1, Math.floor((ctx && (ctx.height || (ctx.size && ctx.size.height))) || 600));\n        const dpr = Math.max(1, Math.min(2, (ctx && (ctx.dpr || (ctx.size && ctx.size.dpr))) || 1));\n        this.scene = new THREE.Scene();\n        this.camera = new THREE.PerspectiveCamera(55, width / height, 0.1, 100);\n        this.camera.position.set(0, 0, 6);\n        this.renderer = new THREE.WebGLRenderer({ canvas: ctx && ctx.canvas ? ctx.canvas : undefined, antialias: true });\n        this.renderer.setPixelRatio(dpr);\n        this.renderer.setSize(width, height, false);\n    }");
+    }
+    if (!/\bonUpdate\s*\(/.test(code)) {
+        code = code.replace(/\n\s*onStart\s*\([^)]*\)\s*\{[^}]*\}/, "$&\n    onUpdate(ctx, time, deltaTime) {\n        // auto-injected onUpdate\n    }");
+    }
+    if (!/\bonResize\s*\(/.test(code)) {
+        code = code.replace(/\n\s*onUpdate\s*\([^)]*\)\s*\{[^}]*\}/, "$&\n    onResize(ctx) {\n        // auto-injected onResize\n    }");
+    }
+    if (!/\bonDestroy\s*\(/.test(code)) {
+        code = code.replace(/\n\s*onResize\s*\([^)]*\)\s*\{[^}]*\}/, "$&\n    onDestroy(ctx) {\n        // auto-injected onDestroy\n    }");
+    }
+    if (!/\bgetUIConfig\s*\(/.test(code)) {
+        code = code.replace(/\n\s*onDestroy\s*\([^)]*\)\s*\{[^}]*\}/, "$&\n    getUIConfig() {\n        return [];\n    }");
+    }
+
     if (/setParam\s*\(/.test(code)) return code;
     const insertion = `
 
@@ -1008,6 +1030,24 @@ app.post('/api/generate-effect-v2', async (req, res) => {
     const body = req.body && typeof req.body === 'object' ? req.body : {};
     const prompt = typeof body.prompt === 'string' ? body.prompt : '';
     if (!prompt.trim()) return res.status(400).json({ error: 'Prompt is required' });
+
+    // Demo stable mode: the public-facing "always preview" path.
+    // Frontend "AI 创作" currently calls /api/generate-effect-v2, so the demo
+    // skeleton fallback must exist here (not only in /api/generate-effect).
+    if (String(process.env.AI_DEMO_MODE || '') === '1') {
+        try {
+            const routed = routePromptToSkeleton(prompt);
+            const params = routed && routed.params ? routed.params : {};
+            const code = routed && routed.kind === 'particles'
+                ? buildParticlesEffectCode(params)
+                : buildGlowSphereEffectCode(params);
+            return res.json({ code });
+        } catch (e) {
+            const code = buildGlowSphereEffectCode({ color: '#ff0040', glowIntensity: 1.2, speed: 1.0 });
+            return res.json({ code });
+        }
+    }
+
     const providers = getAIProvidersFromEnv(process.env);
     if (!providers.length) return res.status(400).json({ error: 'Missing AI_PRIMARY_API_KEY' });
     try {
