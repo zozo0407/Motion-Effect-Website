@@ -76,6 +76,37 @@ function buildBlueprintMessages(prompt) {
   };
 }
 
+const CODE_COMPLIANCE_CHECKLIST = [
+  "第一行必须是 import * as THREE from 'three';",
+  '必须输出 export default class EngineEffect。',
+  '必须实现 constructor()、onStart(ctx)、onUpdate(ctx)、onResize(ctx)、onDestroy(ctx)、getUIConfig()、setParam(key, value)。',
+  '不要假设 ctx.scene、ctx.camera、ctx.renderer 存在；如需这些对象，必须在 onStart(ctx) 内自行创建。',
+  '只可安全使用 ctx.canvas 与尺寸信息（ctx.size / ctx.width / ctx.height / ctx.dpr）。',
+  '优先使用简洁的几何体/材质/灯光组合，避免复杂后处理（例如 composer/postprocessing 多通道）。',
+  '禁止使用 document/window/navigator。',
+  '禁止使用 requestAnimationFrame。',
+  '禁止使用 ctx.renderer。',
+  '禁止创建或挂载 DOM。',
+  '必须在 onUpdate(ctx) 中执行 renderer.render(scene, camera)。',
+  '必须在 onResize(ctx) 中更新 renderer 尺寸和 camera.aspect。',
+  '必须在 onDestroy(ctx) 中释放资源。'
+].join('\n');
+
+const REFERENCE_SUMMARY = [
+  '参考合规框架摘要（只参考结构，不要照抄视觉参数）：',
+  '示例 A：glow sphere',
+  "- onStart: new THREE.Scene() / new THREE.PerspectiveCamera(...) / new THREE.WebGLRenderer({ canvas: ctx.canvas })",
+  '- onStart: 根据 ctx.width/ctx.height/ctx.dpr 或 ctx.size 设置 renderer 尺寸',
+  '- onStart: 创建一个 mesh 作为主体',
+  '- onUpdate: 更新旋转或动画，再调用 renderer.render(scene, camera)',
+  '- onResize: 更新 renderer 尺寸与 camera.aspect',
+  '示例 B：particles',
+  '- onStart: 创建 scene/camera/renderer，并初始化粒子 geometry/material',
+  '- onUpdate: 更新粒子运动，再调用 renderer.render(scene, camera)',
+  '- onResize: 更新 renderer 尺寸与 camera.aspect',
+  '务必沿用这些合规结构，但视觉设计、颜色、运动、材质应根据当前用户需求和蓝图重新创作。'
+].join('\n');
+
 function buildCodeMessages(prompt, blueprint, contract) {
   const blueprintJson = JSON.stringify(blueprint, null, 2);
   return {
@@ -84,13 +115,14 @@ function buildCodeMessages(prompt, blueprint, contract) {
       '基于给定蓝图输出可直接运行的 ES Module 纯代码。',
       '不要解释，不要 markdown code fence。',
       '必须满足 EngineEffect 合约。',
-      '严禁使用 document/window/navigator；不要创建或挂载 DOM；如需容器只能使用 ctx.container；渲染必须使用 ctx.canvas/ctx.gl（如存在），禁止使用 ctx.renderer。严禁 requestAnimationFrame。',
+      CODE_COMPLIANCE_CHECKLIST,
       contract || ''
     ].filter(Boolean).join('\n\n'),
     user: [
       `用户需求：${prompt}`,
       '蓝图：',
-      blueprintJson
+      blueprintJson,
+      REFERENCE_SUMMARY
     ].join('\n\n')
   };
 }

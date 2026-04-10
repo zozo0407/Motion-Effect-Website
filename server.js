@@ -2,6 +2,7 @@ const express = require('express');
 const bodyParser = require('body-parser');
 const fs = require('fs');
 const path = require('path');
+const { spawnSync } = require('node:child_process');
 const cors = require('cors');
 const {
     buildBlueprintMessages,
@@ -16,6 +17,13 @@ require('dotenv').config();
 const { routePromptToSkeleton } = require('./tools/creator/skeleton-router.cjs');
 const { buildGlowSphereEffectCode } = require('./tools/creator/skeletons/glow-sphere.cjs');
 const { buildParticlesEffectCode } = require('./tools/creator/skeletons/particles.cjs');
+const { buildWireframeGeoEffectCode } = require('./tools/creator/skeletons/wireframe-geo.cjs');
+const { buildDigitalRainEffectCode } = require('./tools/creator/skeletons/digital-rain.cjs');
+const { buildGlassGeoEffectCode } = require('./tools/creator/skeletons/glass-geo.cjs');
+const { buildLiquidMetalEffectCode } = require('./tools/creator/skeletons/liquid-metal.cjs');
+const { buildEnergyCoreEffectCode } = require('./tools/creator/skeletons/energy-core.cjs');
+const { ensureOnUpdateMethod, fixUnsafeCtxHelperUsage } = require('./tools/creator/engine-autofix.cjs');
+const { buildMinimalFallbackPayload } = require('./tools/creator/minimal-fallback.cjs');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -27,7 +35,7 @@ app.use(bodyParser.json());
 app.get('/favicon.ico', (req, res) => res.status(204).end());
 app.use(express.static(__dirname)); // Serve root directly
 
-async function generateEffectV2FromPrompt(prompt, apiKey, baseUrl, model) {
+async function generateEffectV2FromPrompt(prompt, apiKey, baseUrl, model, options = {}) {
     const read = (f) => {
         try {
             return fs.readFileSync(path.join(PROMPTS_DIR, f), 'utf8');
@@ -39,6 +47,9 @@ async function generateEffectV2FromPrompt(prompt, apiKey, baseUrl, model) {
     const contract = read('engine-contract.md');
     const url = `${baseUrl}/chat/completions`;
     let blueprint = defaultBlueprint(prompt);
+    const codeTimeoutMs = Number.isFinite(options.codeTimeoutMs) ? options.codeTimeoutMs : 90000;
+    const blueprintTimeoutMs = Number.isFinite(options.blueprintTimeoutMs) ? options.blueprintTimeoutMs : 25000;
+
     if (shouldUseBlueprintStage(process.env)) {
         const blueprintMessages = buildBlueprintMessages(prompt);
         try {
@@ -53,7 +64,7 @@ async function generateEffectV2FromPrompt(prompt, apiKey, baseUrl, model) {
                 ],
                 temperature: 0.3,
                 maxTokens: 1024,
-                timeoutMs: 25000
+                timeoutMs: blueprintTimeoutMs
             });
 
             if (!blueprintRes.ok) {
@@ -85,7 +96,7 @@ async function generateEffectV2FromPrompt(prompt, apiKey, baseUrl, model) {
         ],
         temperature: 0.5,
         maxTokens: 8192,
-        timeoutMs: 180000
+        timeoutMs: codeTimeoutMs
     });
 
     if (!codeRes.ok) {
@@ -103,7 +114,7 @@ async function generateEffectV2FromPrompt(prompt, apiKey, baseUrl, model) {
     return generatedCode;
 }
 
-async function repairEngineEffectCode({ prompt, badCode, error, apiKey, baseUrl, model }) {
+async function repairEngineEffectCode({ prompt, badCode, error, apiKey, baseUrl, model, timeoutMs }) {
     const read = (f) => {
         try {
             return fs.readFileSync(path.join(PROMPTS_DIR, f), 'utf8');
@@ -116,7 +127,10 @@ async function repairEngineEffectCode({ prompt, badCode, error, apiKey, baseUrl,
     const system = [
         '你是 Three.js/WebGL 专家。你只输出“可直接执行的 ES Module 纯代码”，不要任何解释，不要 markdown code fence。',
         '必须满足 EngineEffect 合约：第一行 import * as THREE from \'three\'; 并 export default class EngineEffect，包含 constructor/onStart/onUpdate/onResize/onDestroy/getUIConfig/setParam。',
+        '不得省略任何必需方法，尤其是 onUpdate(ctx)。如果你发现缺失，请优先补齐方法签名与最小可见渲染逻辑（renderer.render(scene, camera)）。',
+        '禁止使用 Three.js 的 *Helper 调试对象（例如 SpotLightHelper、DirectionalLightHelper、PointLightHelper、CameraHelper、AxesHelper、GridHelper 等）。',
         '如需容器只能使用 ctx.container；渲染必须使用 ctx.canvas/ctx.gl（如存在），禁止使用 ctx.renderer。',
+        'ctx 只能在生命周期方法内直接使用；如果辅助方法需要上下文，请在 onStart(ctx) 开头保存 this.ctx = ctx，并在其它方法中使用 this.ctx，或显式把 ctx 作为参数传入。',
         '严禁 requestAnimationFrame；渲染只能在 onUpdate(ctx) 内由外部驱动。',
         contract ? `合约参考：\n${contract}` : ''
     ].filter(Boolean).join('\n\n');
@@ -129,7 +143,8 @@ async function repairEngineEffectCode({ prompt, badCode, error, apiKey, baseUrl,
     ].join('\n\n');
 
     const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 180000);
+    const budgetMs = Number.isFinite(timeoutMs) ? timeoutMs : 180000;
+    const timeoutId = setTimeout(() => controller.abort(), budgetMs);
 
     try {
         const url = `${baseUrl}/chat/completions`;
@@ -714,109 +729,8 @@ app.post('/api/generate-effect', async (req, res) => {
     const { apiKey, baseUrl, model } = getAIConfig();
 
     if (!apiKey) {
-        const mockCode = `
-import * as THREE from 'three';
-
-export default class EngineEffect {
-    constructor() {
-        this.params = {
-            color: '#00CAE0',
-            intensity: 1.0,
-            speed: 1.0
-        };
-        this.scene = null;
-        this.camera = null;
-        this.renderer = null;
-        this.mesh = null;
-    }
-
-    getUIConfig() {
-        return [
-            { bind: 'color', name: '主色', type: 'color', value: this.params.color },
-            { bind: 'intensity', name: '强度', type: 'range', value: this.params.intensity, min: 0, max: 2, step: 0.01 },
-            { bind: 'speed', name: '速度', type: 'range', value: this.params.speed, min: 0, max: 5, step: 0.01 }
-        ];
-    }
-
-    setParam(key, value) {
-        if (key === 'color' && typeof value === 'string') {
-            this.params.color = value;
-            if (this.mesh && this.mesh.material && this.mesh.material.color) {
-                this.mesh.material.color.set(value);
-            }
-            return;
-        }
-        if ((key === 'intensity' || key === 'speed') && typeof value === 'number' && Number.isFinite(value)) {
-            this.params[key] = value;
-        }
-    }
-
-    onStart(ctx) {
-        const size = ctx && ctx.size ? ctx.size : { width: 1, height: 1, dpr: 1 };
-        const width = Math.max(1, Math.floor(size.width || 1));
-        const height = Math.max(1, Math.floor(size.height || 1));
-        const dpr = Math.max(1, Math.min(2, Number(size.dpr) || 1));
-
-        this.scene = new THREE.Scene();
-        this.scene.background = new THREE.Color(0x111111);
-
-        this.camera = new THREE.PerspectiveCamera(60, width / height, 0.1, 1000);
-        this.camera.position.set(0, 0, 5);
-
-        const rendererOptions = { antialias: true, alpha: true };
-        if (ctx && ctx.canvas) rendererOptions.canvas = ctx.canvas;
-        if (ctx && ctx.gl) rendererOptions.context = ctx.gl;
-        this.renderer = new THREE.WebGLRenderer(rendererOptions);
-        this.renderer.setPixelRatio(dpr);
-        this.renderer.setSize(width, height, false);
-
-        const ambientLight = new THREE.AmbientLight(0xffffff, 0.5);
-        this.scene.add(ambientLight);
-        const pointLight = new THREE.PointLight(0xffffff, 1);
-        pointLight.position.set(5, 5, 5);
-        this.scene.add(pointLight);
-
-        const geometry = new THREE.TorusKnotGeometry(1, 0.3, 100, 16);
-        const material = new THREE.MeshStandardMaterial({ color: this.params.color, roughness: 0.1, metalness: 0.8 });
-        this.mesh = new THREE.Mesh(geometry, material);
-        this.scene.add(this.mesh);
-    }
-
-    onResize(size) {
-        if (!this.camera || !this.renderer) return;
-        const width = Math.max(1, Math.floor(size && size.width ? size.width : 1));
-        const height = Math.max(1, Math.floor(size && size.height ? size.height : 1));
-        const dpr = Math.max(1, Math.min(2, Number(size && size.dpr) || 1));
-        this.camera.aspect = width / height;
-        this.camera.updateProjectionMatrix();
-        this.renderer.setPixelRatio(dpr);
-        this.renderer.setSize(width, height, false);
-    }
-
-    onUpdate(ctx) {
-        if (!this.renderer || !this.scene || !this.camera) return;
-        const time = (ctx && typeof ctx.time === 'number') ? ctx.time : 0;
-        if (this.mesh) {
-            const s = Number.isFinite(this.params.speed) ? this.params.speed : 1;
-            this.mesh.rotation.x = time * 0.5 * s;
-            this.mesh.rotation.y = time * 0.8 * s;
-        }
-        this.renderer.render(this.scene, this.camera);
-    }
-
-    onDestroy() {
-        if (this.mesh) {
-            if (this.mesh.geometry) this.mesh.geometry.dispose();
-            if (this.mesh.material) this.mesh.material.dispose();
-        }
-        if (this.renderer) this.renderer.dispose();
-        this.mesh = null;
-        this.scene = null;
-        this.camera = null;
-        this.renderer = null;
-    }
-}
-        `;
+        const { buildEnergyCoreEffectCode } = require('./tools/creator/skeletons/energy-core.cjs');
+        const mockCode = buildEnergyCoreEffectCode({ color: '#00f2ff', intensity: 1.2, speed: 1.0 });
         return res.json({ code: mockCode });
     }
 
@@ -941,6 +855,51 @@ function basicSyntaxScan(code) {
     return null;
 }
 
+function checkESMModuleSyntax(code) {
+    const src = String(code || '');
+    // Quick skip for obviously empty payloads
+    if (!src.trim()) return '代码语法错误：Code is empty';
+
+    // Use Node's parser for a reliable syntax check (supports `import` in .mjs).
+    const tmpName = `syntax-${Date.now()}-${Math.random().toString(16).slice(2)}.mjs`;
+    const tmpPath = path.join(TEMP_PREVIEWS_DIR, tmpName);
+    try {
+        fs.writeFileSync(tmpPath, src, 'utf8');
+        const r = spawnSync(process.execPath, ['--check', tmpPath], {
+            encoding: 'utf8',
+            stdio: ['ignore', 'pipe', 'pipe']
+        });
+        if (r.status === 0) return null;
+        const out = String((r.stderr && r.stderr.trim()) || (r.stdout && r.stdout.trim()) || '').trim();
+        // Extract the most useful line, typically: "SyntaxError: ..."
+        const lines = out.split('\n').map(s => s.trim()).filter(Boolean);
+        const syntaxLine = lines.find(l => /^SyntaxError:/i.test(l)) || (lines.length ? lines[lines.length - 1] : 'Unknown syntax error');
+        return `代码语法错误：${syntaxLine}`;
+    } catch (e) {
+        return `代码语法错误：${e && e.message ? e.message : String(e)}`;
+    } finally {
+        try { fs.unlinkSync(tmpPath); } catch (_) {}
+    }
+}
+
+function findUnsafeCtxHelperUsage(code) {
+    const src = String(code || '');
+    const methodRe = /\n\s*([A-Za-z_$][\w$]*)\s*\(([^)]*)\)\s*\{([\s\S]*?)\n\s*\}/g;
+    const lifecycle = new Set(['constructor', 'onStart', 'onUpdate', 'onResize', 'onDestroy', 'getUIConfig', 'setParam']);
+    let m;
+    while ((m = methodRe.exec(src))) {
+        const name = m[1];
+        const params = m[2] || '';
+        const body = m[3] || '';
+        if (lifecycle.has(name)) continue;
+        if (/\bctx\b/.test(params)) continue;
+        if (/\bctx\./.test(body)) {
+            return name;
+        }
+    }
+    return null;
+}
+
 function normalizeEngineEffectExport(code) {
     if (typeof code !== 'string') return code;
     let s = code;
@@ -961,6 +920,7 @@ function autoFixEngineEffectCode(code) {
     code = stripModelNonCodePrologue(code);
     code = normalizeThreeNamespaceImport(code);
     code = normalizeEngineEffectExport(code);
+    code = fixUnsafeCtxHelperUsage(code);
 
     // If it doesn't look like EngineEffect at all, let the validator catch it.
     if (!/export\s+default\s+class\s+EngineEffect/.test(code)) return code;
@@ -970,7 +930,9 @@ function autoFixEngineEffectCode(code) {
         code = code.replace(/class\s+EngineEffect\s*(?:extends\s+[^{]+)?\s*\{/, "class EngineEffect {\n    onStart(ctx) {\n        const width = Math.max(1, Math.floor((ctx && (ctx.width || (ctx.size && ctx.size.width))) || 800));\n        const height = Math.max(1, Math.floor((ctx && (ctx.height || (ctx.size && ctx.size.height))) || 600));\n        const dpr = Math.max(1, Math.min(2, (ctx && (ctx.dpr || (ctx.size && ctx.size.dpr))) || 1));\n        this.scene = new THREE.Scene();\n        this.camera = new THREE.PerspectiveCamera(55, width / height, 0.1, 100);\n        this.camera.position.set(0, 0, 6);\n        this.renderer = new THREE.WebGLRenderer({ canvas: ctx && ctx.canvas ? ctx.canvas : undefined, antialias: true });\n        this.renderer.setPixelRatio(dpr);\n        this.renderer.setSize(width, height, false);\n    }");
     }
     if (!/\bonUpdate\s*\(/.test(code)) {
-        code = code.replace(/\n\s*onStart\s*\([^)]*\)\s*\{[^}]*\}/, "$&\n    onUpdate(ctx, time, deltaTime) {\n        // auto-injected onUpdate\n    }");
+        // The previous regex-based insertion could fail when onStart contains nested braces.
+        // Use a more robust insertion strategy.
+        code = ensureOnUpdateMethod(code);
     }
     if (!/\bonResize\s*\(/.test(code)) {
         code = code.replace(/\n\s*onUpdate\s*\([^)]*\)\s*\{[^}]*\}/, "$&\n    onResize(ctx) {\n        // auto-injected onResize\n    }");
@@ -1018,6 +980,17 @@ function validateEngineEffectCode(code) {
     const openBraces = (String(code).match(/\{/g) || []).length;
     const closeBraces = (String(code).match(/\}/g) || []).length;
     if (closeBraces < openBraces) return '代码疑似被截断（大括号不闭合）';
+    const syntaxErr = checkESMModuleSyntax(code);
+    if (syntaxErr) return syntaxErr;
+    // Stability: disallow Three.js debug helpers that often cause runtime crashes when misused
+    // (e.g. SpotLightHelper with undefined light/target).
+    if (/\bTHREE\.\w+Helper\b/.test(String(code))) {
+        return '检测到 Three.js Helper（如 SpotLightHelper / AxesHelper / GridHelper 等）。为避免运行时崩溃与性能问题，禁止使用 Helper 调试对象。';
+    }
+    const unsafeCtxHelper = findUnsafeCtxHelperUsage(code);
+    if (unsafeCtxHelper) {
+        return `检测到辅助方法中直接使用 ctx：${unsafeCtxHelper}()。请改为在 onStart(ctx) 中保存 this.ctx，并在辅助方法里使用 this.ctx；或者调用辅助方法时显式传入 ctx 参数。`;
+    }
     const ctor = String(code).match(/\bconstructor\s*\(([^)]*)\)/);
     if (ctor && ctor[1] && ctor[1].trim()) return 'constructor() 不应接收任何参数（外部会以 new EngineEffect() 方式实例化）';
     if (/\bclass\s+ScriptScene\b/.test(code)) return '检测到 ScriptScene（应输出 EngineEffect）';
@@ -1026,40 +999,141 @@ function validateEngineEffectCode(code) {
     return null;
 }
 
+function buildCodeFromSkeletonRoute(skeletonRoute) {
+    if (!skeletonRoute || !skeletonRoute.matched) return '';
+    const params = skeletonRoute.params || {};
+    if (skeletonRoute.kind === 'energy-core') return buildEnergyCoreEffectCode(params);
+    if (skeletonRoute.kind === 'particles-vortex') return buildParticlesEffectCode(params);
+    if (skeletonRoute.kind === 'wireframe-geo') return buildWireframeGeoEffectCode(params);
+    if (skeletonRoute.kind === 'digital-rain') return buildDigitalRainEffectCode(params);
+    if (skeletonRoute.kind === 'glass-geo') return buildGlassGeoEffectCode(params);
+    if (skeletonRoute.kind === 'liquid-metal') return buildLiquidMetalEffectCode(params);
+    return '';
+}
+
+function isSkeletonRouterEnabled(env = process.env) {
+    const raw = typeof env.AI_ENABLE_SKELETON_ROUTER === 'string' ? env.AI_ENABLE_SKELETON_ROUTER.trim().toLowerCase() : '';
+    return raw === '1' || raw === 'true' || raw === 'yes' || raw === 'on';
+}
+
+function isLegacySkeletonsDisabled(env = process.env) {
+    const raw = typeof env.AI_DISABLE_LEGACY_SKELETONS === 'string' ? env.AI_DISABLE_LEGACY_SKELETONS.trim().toLowerCase() : '';
+    return raw === '1' || raw === 'true' || raw === 'yes' || raw === 'on';
+}
+
+function isMinimalFallbackEnabled(env = process.env) {
+    // Default ON. Set AI_ENABLE_MINIMAL_FALLBACK=0/false/off to disable.
+    const raw = typeof env.AI_ENABLE_MINIMAL_FALLBACK === 'string' ? env.AI_ENABLE_MINIMAL_FALLBACK.trim().toLowerCase() : '';
+    if (!raw) return true;
+    return !(raw === '0' || raw === 'false' || raw === 'no' || raw === 'off');
+}
+
+function getV2TotalBudgetMs(env = process.env) {
+    const raw = typeof env.AI_V2_TOTAL_BUDGET_MS === 'string' ? env.AI_V2_TOTAL_BUDGET_MS.trim() : '';
+    const v = raw ? Number(raw) : 90000;
+    // Keep a sane floor/ceiling so misconfig doesn't break UX.
+    if (!Number.isFinite(v)) return 90000;
+    return Math.max(15000, Math.min(180000, Math.floor(v)));
+}
+
 app.post('/api/generate-effect-v2', async (req, res) => {
     const body = req.body && typeof req.body === 'object' ? req.body : {};
     const prompt = typeof body.prompt === 'string' ? body.prompt : '';
     if (!prompt.trim()) return res.status(400).json({ error: 'Prompt is required' });
 
+    const skeletonEnabled = isSkeletonRouterEnabled(process.env);
+    const legacySkeletonsDisabled = isLegacySkeletonsDisabled(process.env);
+    const minimalFallbackEnabled = isMinimalFallbackEnabled(process.env);
+    const totalBudgetMs = getV2TotalBudgetMs(process.env);
+    const t0 = Date.now();
+    const remainingBudgetMs = () => totalBudgetMs - (Date.now() - t0);
+
+    const budgetExceededPayload = (reason) => {
+        console.log(`[v2][budget] budget exceeded: ${reason}`);
+        return buildMinimalFallbackPayload({ reason: `budget exceeded: ${reason}`, prompt });
+    };
+
     // Demo stable mode: the public-facing "always preview" path.
     // Frontend "AI 创作" currently calls /api/generate-effect-v2, so the demo
     // skeleton fallback must exist here (not only in /api/generate-effect).
-    if (String(process.env.AI_DEMO_MODE || '') === '1') {
+    if (skeletonEnabled && String(process.env.AI_DEMO_MODE || '') === '1') {
+        if (legacySkeletonsDisabled) {
+            const code = buildEnergyCoreEffectCode({ color: '#00f2ff', intensity: 1.2, speed: 1.0 });
+            return res.json({ code, degraded: true, degradedReason: 'AI_DISABLE_LEGACY_SKELETONS=1' });
+        }
         try {
             const routed = routePromptToSkeleton(prompt);
-            const params = routed && routed.params ? routed.params : {};
-            const code = routed && routed.kind === 'particles'
-                ? buildParticlesEffectCode(params)
-                : buildGlowSphereEffectCode(params);
+            const code = buildCodeFromSkeletonRoute(routed) || buildEnergyCoreEffectCode({ color: '#00f2ff', intensity: 1.2, speed: 1.0 });
             return res.json({ code });
         } catch (e) {
-            const code = buildGlowSphereEffectCode({ color: '#ff0040', glowIntensity: 1.2, speed: 1.0 });
+            const code = buildEnergyCoreEffectCode({ color: '#00f2ff', intensity: 1.2, speed: 1.0 });
             return res.json({ code });
+        }
+    }
+
+    if (skeletonEnabled) {
+        if (legacySkeletonsDisabled) {
+            const code = buildEnergyCoreEffectCode({ color: '#00f2ff', intensity: 1.2, speed: 1.0 });
+            return res.json({ code, degraded: true, degradedReason: 'AI_DISABLE_LEGACY_SKELETONS=1' });
+        }
+        const skeletonRoute = routePromptToSkeleton(prompt);
+        if (skeletonRoute && skeletonRoute.matched) {
+            const code = buildCodeFromSkeletonRoute(skeletonRoute);
+            if (code) return res.json({ code });
         }
     }
 
     const providers = getAIProvidersFromEnv(process.env);
     if (!providers.length) return res.status(400).json({ error: 'Missing AI_PRIMARY_API_KEY' });
     try {
+        if (remainingBudgetMs() <= 0) {
+            return res.json(budgetExceededPayload('before generation'));
+        }
         let generatedCode = await runWithProviderFallback(providers, async (provider) => {
-            return generateEffectV2FromPrompt(prompt, provider.apiKey, provider.baseUrl, provider.model);
+            return generateEffectV2FromPrompt(prompt, provider.apiKey, provider.baseUrl, provider.model, {
+                codeTimeoutMs: Math.max(1000, Math.min(90000, remainingBudgetMs() - 1500))
+            });
         });
         generatedCode = autoFixEngineEffectCode(generatedCode);
-        const scanErr = validateEngineEffectCode(generatedCode);
-        if (scanErr) return res.status(502).json({ error: `AI 输出不符合 EngineEffect 合约：${scanErr}` });
+        let scanErr = validateEngineEffectCode(generatedCode);
+        if (scanErr) {
+            console.log(`[v2][generate-effect-v2] Validation failed: ${scanErr}, attempting repair...`);
+            if (remainingBudgetMs() <= 0) {
+                return res.json(budgetExceededPayload('before repair'));
+            }
+            const repaired = await runWithProviderFallback(providers, async (provider) => {
+                return repairEngineEffectCode({
+                    prompt,
+                    badCode: generatedCode,
+                    error: scanErr,
+                    apiKey: provider.apiKey,
+                    baseUrl: provider.baseUrl,
+                    model: provider.model,
+                    timeoutMs: Math.max(1000, Math.min(45000, remainingBudgetMs() - 1500))
+                });
+            });
+            const repairedFixed = autoFixEngineEffectCode(repaired);
+            scanErr = validateEngineEffectCode(repairedFixed);
+            if (scanErr) {
+                if (minimalFallbackEnabled) {
+                    return res.json(buildMinimalFallbackPayload({
+                        reason: `AI 输出不符合 EngineEffect 合约：${scanErr}`,
+                        prompt
+                    }));
+                }
+                return res.status(502).json({ error: `AI 输出不符合 EngineEffect 合约：${scanErr}` });
+            }
+            return res.json({ code: repairedFixed });
+        }
         res.json({ code: generatedCode });
     } catch (e) {
         console.error('Two-step generation failed:', e);
+        if (minimalFallbackEnabled) {
+            return res.json(buildMinimalFallbackPayload({
+                reason: e && e.message ? e.message : 'Internal Server Error',
+                prompt
+            }));
+        }
         res.status(500).json({ error: e && e.message ? e.message : 'Internal Server Error' });
     }
 });

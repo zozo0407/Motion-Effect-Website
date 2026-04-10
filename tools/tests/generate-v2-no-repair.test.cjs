@@ -12,7 +12,8 @@ assert(routeEnd > routeStart, 'server.js should continue with the non-v2 branch 
 
 const v2Branch = server.slice(routeStart, routeEnd);
 
-assert(!v2Branch.includes('repairEngineEffectCode('), 'v2 route should not invoke repairEngineEffectCode while repair is temporarily disabled');
-assert(v2Branch.includes('if (scanErr) return res.status(502).json({ error: `AI 输出不符合 EngineEffect 合约：${scanErr}` });'), 'v2 route should return validation error directly when repair is disabled');
+assert(v2Branch.includes('attempting repair'), 'v2 route should log when validation fails and repair starts');
+assert(v2Branch.includes('repairEngineEffectCode({'), 'v2 route should attempt repair for invalid generated code');
+assert(v2Branch.includes('const repairedFixed = autoFixEngineEffectCode(repaired);'), 'v2 route should auto-fix repaired code before returning it');
 
 console.log('generate-v2-no-repair.test.cjs passed');

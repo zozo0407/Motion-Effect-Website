@@ -11,9 +11,13 @@ function sanitizeHexColor(c, fallback) {
 }
 
 function buildParticlesEffectCode(opts) {
-  const color = sanitizeHexColor(opts && opts.color, '#00caff');
+  const color = sanitizeHexColor((opts && (opts.color || opts.primaryColor)), '#00caff');
   const speed = clamp(opts && opts.speed, 0.0, 3.0);
-  const density = Math.floor(clamp(opts && opts.density, 300, 4000));
+  const rawDensity = opts && opts.density;
+  const density = Math.floor(rawDensity && rawDensity <= 10 ? clamp(rawDensity * 1600, 300, 4000) : clamp(rawDensity, 300, 4000));
+  const glowIntensity = clamp(opts && opts.glowIntensity, 0.2, 2.5);
+  const pulseStrength = clamp(opts && opts.pulseStrength, 0.0, 1.0);
+  const fogStrength = clamp(opts && opts.fogStrength, 0.0, 1.0);
 
   return `import * as THREE from 'three';
 
@@ -22,7 +26,10 @@ export default class EngineEffect {
     this.params = {
       color: '${color}',
       speed: ${speed},
-      density: ${density}
+      density: ${density},
+      glowIntensity: ${glowIntensity},
+      pulseStrength: ${pulseStrength},
+      fogStrength: ${fogStrength}
     };
     this.scene = null;
     this.camera = null;
@@ -37,7 +44,10 @@ export default class EngineEffect {
     return [
       { bind: 'color', name: '主色调', type: 'color', value: this.params.color },
       { bind: 'speed', name: '速度', type: 'range', value: this.params.speed, min: 0.0, max: 3.0, step: 0.05 },
-      { bind: 'density', name: '密度', type: 'range', value: this.params.density, min: 300, max: 4000, step: 100 }
+      { bind: 'density', name: '密度', type: 'range', value: this.params.density, min: 300, max: 4000, step: 100 },
+      { bind: 'glowIntensity', name: '发光强度', type: 'range', value: this.params.glowIntensity, min: 0.2, max: 2.5, step: 0.05 },
+      { bind: 'pulseStrength', name: '脉冲', type: 'range', value: this.params.pulseStrength, min: 0.0, max: 1.0, step: 0.05 },
+      { bind: 'fogStrength', name: '雾感', type: 'range', value: this.params.fogStrength, min: 0.0, max: 1.0, step: 0.05 }
     ];
   }
 
@@ -54,6 +64,24 @@ export default class EngineEffect {
     if (key === 'speed' && typeof value === 'number' && Number.isFinite(value)) {
       if (this.material && this.material.uniforms && this.material.uniforms.uSpeed) {
         this.material.uniforms.uSpeed.value = value;
+      }
+      return;
+    }
+    if (key === 'glowIntensity' && typeof value === 'number' && Number.isFinite(value)) {
+      if (this.material && this.material.uniforms && this.material.uniforms.uGlowIntensity) {
+        this.material.uniforms.uGlowIntensity.value = value;
+      }
+      return;
+    }
+    if (key === 'pulseStrength' && typeof value === 'number' && Number.isFinite(value)) {
+      if (this.material && this.material.uniforms && this.material.uniforms.uPulseStrength) {
+        this.material.uniforms.uPulseStrength.value = value;
+      }
+      return;
+    }
+    if (key === 'fogStrength' && typeof value === 'number' && Number.isFinite(value)) {
+      if (this.material && this.material.uniforms && this.material.uniforms.uFogStrength) {
+        this.material.uniforms.uFogStrength.value = value;
       }
       return;
     }
@@ -117,13 +145,17 @@ export default class EngineEffect {
         uTime: { value: 0.0 },
         uSpeed: { value: Number.isFinite(this.params.speed) ? this.params.speed : 1.0 },
         uColor: { value: new THREE.Color(this.params.color) },
-        uSize: { value: 3.0 }
+        uSize: { value: 3.0 },
+        uGlowIntensity: { value: Number.isFinite(this.params.glowIntensity) ? this.params.glowIntensity : 1.0 },
+        uPulseStrength: { value: Number.isFinite(this.params.pulseStrength) ? this.params.pulseStrength : 0.0 },
+        uFogStrength: { value: Number.isFinite(this.params.fogStrength) ? this.params.fogStrength : 0.0 }
       },
       vertexShader: \`
         attribute float aPhase;
         uniform float uTime;
         uniform float uSpeed;
         uniform float uSize;
+        uniform float uPulseStrength;
         varying float vPulse;
         void main() {
           vec3 p = position;
@@ -131,7 +163,7 @@ export default class EngineEffect {
           // Gentle swirl
           p.xz = mat2(cos(t*0.2), -sin(t*0.2), sin(t*0.2), cos(t*0.2)) * p.xz;
           // Breathing
-          float breathe = 0.06 * sin(t);
+          float breathe = 0.06 * sin(t) * (1.0 + uPulseStrength * 1.8);
           p *= (1.0 + breathe);
           vPulse = 0.5 + 0.5 * sin(t);
           vec4 mvPosition = modelViewMatrix * vec4(p, 1.0);
@@ -143,6 +175,8 @@ export default class EngineEffect {
       fragmentShader: \`
         precision highp float;
         uniform vec3 uColor;
+        uniform float uGlowIntensity;
+        uniform float uFogStrength;
         varying float vPulse;
         void main() {
           vec2 uv = gl_PointCoord.xy * 2.0 - 1.0;
@@ -150,8 +184,9 @@ export default class EngineEffect {
           if (r2 > 1.0) discard;
           float a = smoothstep(1.0, 0.0, r2);
           a *= (0.6 + 0.4 * vPulse);
-          vec3 c = uColor * (0.6 + 0.8 * a);
-          gl_FragColor = vec4(c, a);
+          float fog = mix(1.0, 0.72, uFogStrength);
+          vec3 c = uColor * (0.6 + 0.8 * a) * (0.8 + 0.4 * uGlowIntensity);
+          gl_FragColor = vec4(c, a * fog);
         }
       \`,
       transparent: true,
@@ -206,6 +241,9 @@ export default class EngineEffect {
     if (this.material && this.material.uniforms) {
       this.material.uniforms.uTime.value = time;
       this.material.uniforms.uSpeed.value = Number.isFinite(this.params.speed) ? this.params.speed : 1.0;
+      this.material.uniforms.uGlowIntensity.value = Number.isFinite(this.params.glowIntensity) ? this.params.glowIntensity : 1.0;
+      this.material.uniforms.uPulseStrength.value = Number.isFinite(this.params.pulseStrength) ? this.params.pulseStrength : 0.0;
+      this.material.uniforms.uFogStrength.value = Number.isFinite(this.params.fogStrength) ? this.params.fogStrength : 0.0;
     }
     if (this.points) {
       const s = Number.isFinite(this.params.speed) ? this.params.speed : 1.0;
@@ -235,4 +273,3 @@ export default class EngineEffect {
 module.exports = {
   buildParticlesEffectCode
 };
-

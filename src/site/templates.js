@@ -465,7 +465,10 @@
      __canvas.width = Math.max(1, Math.floor(size.width * size.dpr));
      __canvas.height = Math.max(1, Math.floor(size.height * size.dpr));
      if (__started && typeof __effect.onResize === 'function') {
-         __effect.onResize(size);
+        // Be tolerant to both signatures:
+        // - onResize(size): expects { width, height, dpr }
+        // - onResize(ctx): expects ctx.size.width (EngineEffect-style ctx)
+        __effect.onResize({ size, ...size });
      }
  };
    try {
