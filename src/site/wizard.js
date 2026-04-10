@@ -9,6 +9,10 @@ const API_BASE = '/api';
 let currentTemplate = null;
 let scriptSceneAutoIndex = 1;
 
+// Tracks the currently running AI generation so we can cancel it when user closes the console.
+// This prevents late responses from a previous run from mutating UI after the user re-opens.
+let activeGeneration = null;
+
 const templates = {
     'ai-custom': {
         name: 'AI 创意生成',
@@ -112,6 +116,20 @@ export function closeConsole() {
     const panel = document.getElementById('console-panel');
 
     if (!consoleModal || !panel) return;
+
+    // Hard-cancel any in-flight generation tied to this console session.
+    if (activeGeneration) {
+        try {
+            activeGeneration.closed = true;
+            if (activeGeneration.timeoutId) clearTimeout(activeGeneration.timeoutId);
+            if (activeGeneration.progressInterval) clearInterval(activeGeneration.progressInterval);
+            if (activeGeneration.controller) activeGeneration.controller.abort();
+        } catch (_) {
+            // best-effort cancel
+        } finally {
+            activeGeneration = null;
+        }
+    }
 
     consoleModal.classList.add('opacity-0');
     panel.classList.remove('scale-100');
@@ -354,6 +372,7 @@ export async function generateDemo() {
 
     let progress = 0;
     let progressInterval;
+    const sessionId = `${Date.now()}-${Math.random().toString(16).slice(2)}`;
 
     const startSimulatedProgress = () => {
         const MAX_WAIT_MS = 90000; // 90 seconds (align with server)
@@ -426,6 +445,16 @@ export async function generateDemo() {
             const __timeoutId = setTimeout(() => {
                 __ctrl.abort();
             }, __timeoutMs);
+
+            // Register this run as the currently active generation.
+            activeGeneration = {
+                sessionId,
+                controller: __ctrl,
+                timeoutId: __timeoutId,
+                progressInterval,
+                closed: false
+            };
+
             let res;
             let raw = '';
             try {
@@ -438,6 +467,11 @@ export async function generateDemo() {
                 raw = await res.text();
             } finally {
                 clearTimeout(__timeoutId);
+            }
+
+            // If the user has closed/re-opened the console, drop stale responses.
+            if (!activeGeneration || activeGeneration.sessionId !== sessionId || activeGeneration.closed) {
+                return;
             }
             let json = null;
             try { json = JSON.parse(raw); } catch (_) { json = null; }
@@ -472,54 +506,46 @@ export async function generateDemo() {
                 backupBtn.id = 'btn-load-backup';
                 backupBtn.className = 'ml-4 px-6 py-2 bg-amber-500/20 hover:bg-amber-500/40 text-amber-400 rounded font-mono text-sm transition-colors border border-amber-500/50 hover:border-amber-500';
                 backupBtn.innerText = '加载兜底方案';
-                backupBtn.onclick = () => {
+                backupBtn.onclick = async () => {
                     if (!injectedGenerateAIHTML) return;
                     
-                    const fallbackCode = `import * as THREE from 'three';
+                    let fallbackCode = '';
+                    try {
+                        // Fetch the latest fallback from server to ensure it has all UI interactions
+                        const fallbackRes = await fetch(`${API_BASE}/generate-effect-v2`, {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({ prompt: '能量核心' }) // Forces skeleton router to hit energy-core
+                        });
+                        const fallbackJson = await fallbackRes.json();
+                        if (fallbackJson && fallbackJson.code) {
+                            fallbackCode = fallbackJson.code;
+                        }
+                    } catch (err) {
+                        console.error('Failed to fetch fallback from server', err);
+                    }
 
+                    // Ultimate hardcoded fallback just in case the server fails completely
+                    if (!fallbackCode) {
+                        fallbackCode = `import * as THREE from 'three';
 export default class EngineEffect {
     constructor() {
-        this.scene = null;
-        this.camera = null;
-        this.renderer = null;
-        this.group = null;
+        this.scene = null; this.camera = null; this.renderer = null; this.group = null;
     }
-
     onStart(ctx) {
-        // Create our own scene/camera/renderer - preview runtime does not provide them in ctx
         const width = Math.max(1, Math.floor((ctx && (ctx.width || (ctx.size && ctx.size.width))) || 800));
         const height = Math.max(1, Math.floor((ctx && (ctx.height || (ctx.size && ctx.size.height))) || 600));
-        const dpr = Math.max(1, Math.min(2, (ctx && (ctx.dpr || (ctx.size && ctx.size.dpr))) || 1));
-
         this.scene = new THREE.Scene();
         this.camera = new THREE.PerspectiveCamera(55, width / height, 0.1, 100);
         this.camera.position.set(0, 0, 6);
-
         this.renderer = new THREE.WebGLRenderer({ canvas: ctx && ctx.canvas ? ctx.canvas : undefined, antialias: true });
-        this.renderer.setPixelRatio(dpr);
         this.renderer.setSize(width, height, false);
-        this.renderer.setClearColor(0x0a0a1a, 1.0);
-
-        this.group = new THREE.Group();
-        this.scene.add(this.group);
-
+        this.group = new THREE.Group(); this.scene.add(this.group);
         const geo = new THREE.IcosahedronGeometry(1.6, 0);
-        const mat = new THREE.MeshStandardMaterial({
-            color: '#0ea5e9',
-            roughness: 0.35,
-            metalness: 0.2,
-            wireframe: true
-        });
-        const mesh = new THREE.Mesh(geo, mat);
-        this.group.add(mesh);
-
-        const ambient = new THREE.AmbientLight(0xffffff, 0.6);
-        const point = new THREE.PointLight(0x88ccff, 1.2);
-        point.position.set(5, 5, 5);
-        this.scene.add(ambient);
-        this.scene.add(point);
+        const mat = new THREE.MeshStandardMaterial({ color: '#0ea5e9', wireframe: true });
+        this.group.add(new THREE.Mesh(geo, mat));
+        this.scene.add(new THREE.AmbientLight(0xffffff, 0.6));
     }
-
     onUpdate(ctx) {
         if (!this.renderer || !this.scene || !this.camera) return;
         if (this.group) {
@@ -528,22 +554,10 @@ export default class EngineEffect {
         }
         this.renderer.render(this.scene, this.camera);
     }
-
-    onResize(size) {
-        if (!this.renderer || !this.camera) return;
-        const width = Math.max(1, Math.floor((size && size.width) || 800));
-        const height = Math.max(1, Math.floor((size && size.height) || 600));
-        const dpr = Math.max(1, Math.min(2, (size && size.dpr) || 1));
-        this.renderer.setPixelRatio(dpr);
-        this.renderer.setSize(width, height, false);
-        this.camera.aspect = width / height;
-        this.camera.updateProjectionMatrix();
-    }
-
-    onDestroy() {}
-    getUIConfig() { return []; }
-    setParam(key, value) {}
+    onResize(size) {} onDestroy() {} getUIConfig() { return []; } setParam(key, value) {}
 }`;
+                    }
+
                     htmlContent = injectedGenerateAIHTML(fallbackCode);
                     
                     const blob = new Blob([htmlContent], { type: 'text/html' });
@@ -583,6 +597,10 @@ export default class EngineEffect {
     }
 
     setTimeout(() => {
+        // Drop stale completions if the user closed/re-opened the console.
+        if (currentTemplate === 'ai-custom') {
+            if (!activeGeneration || activeGeneration.sessionId !== sessionId || activeGeneration.closed) return;
+        }
         const blob = new Blob([htmlContent], { type: 'text/html' });
         const url = URL.createObjectURL(blob);
 
