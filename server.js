@@ -24,6 +24,7 @@ const { buildLiquidMetalEffectCode } = require('./tools/creator/skeletons/liquid
 const { buildEnergyCoreEffectCode } = require('./tools/creator/skeletons/energy-core.cjs');
 const { ensureOnUpdateMethod, fixUnsafeCtxHelperUsage } = require('./tools/creator/engine-autofix.cjs');
 const { buildMinimalFallbackPayload } = require('./tools/creator/minimal-fallback.cjs');
+const { wrapAsEngineEffect, parseAIOutput } = require('./tools/creator/v2-wrapped-parts.cjs');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -36,6 +37,7 @@ app.get('/favicon.ico', (req, res) => res.status(204).end());
 app.use(express.static(__dirname)); // Serve root directly
 
 async function generateEffectV2FromPrompt(prompt, apiKey, baseUrl, model, options = {}) {
+    const outputMode = String(options.outputMode || '').trim();
     const read = (f) => {
         try {
             return fs.readFileSync(path.join(PROMPTS_DIR, f), 'utf8');
@@ -49,6 +51,63 @@ async function generateEffectV2FromPrompt(prompt, apiKey, baseUrl, model, option
     let blueprint = defaultBlueprint(prompt);
     const codeTimeoutMs = Number.isFinite(options.codeTimeoutMs) ? options.codeTimeoutMs : 90000;
     const blueprintTimeoutMs = Number.isFinite(options.blueprintTimeoutMs) ? options.blueprintTimeoutMs : 25000;
+
+    if (outputMode === 'wrapped_parts') {
+        const systemPrompt = [
+            '你是 Three.js / WebGL 视觉特效专家。根据用户的需求描述，输出两段 JavaScript 代码（仅函数体）。',
+            '',
+            '【setup】用于初始化场景。你可以添加灯光/几何体/材质/粒子等。',
+            '可直接使用变量（已由外部创建，不要重新声明）：scene / camera / renderer',
+            '需要在 animate 中访问的对象，必须挂在 this 上，例如：this.mesh = new THREE.Mesh(...)',
+            '',
+            '【animate】每帧调用一次。可直接使用变量：time / deltaTime，并通过 this.xxx 访问 setup 对象。',
+            '不要调用 renderer.render()（外层会自动 render）。',
+            '',
+            '【输出格式（严格）】只输出两段纯 JavaScript，用 ---SPLIT--- 分隔；不要 markdown/code fence；不要 import/export/class；不要解释文字：',
+            '// === setup ===',
+            '(setup code)',
+            '---SPLIT---',
+            '// === animate ===',
+            '(animate code)',
+            '',
+            '【禁止】document./window./requestAnimationFrame/appendChild/getElementById',
+            '【禁止】声明 const scene / const camera / const renderer',
+            '【禁止】THREE.*Helper（SpotLightHelper/PointLightHelper 等）',
+            '【禁止】async/await',
+            '',
+            '【质量】深色背景、配色低饱和、有层次、代码简洁（setup+animate 合计 <= 120 行）。'
+        ].join('\n');
+
+        const partsRes = await runV2Stage({
+            stage: 'parts',
+            url,
+            apiKey,
+            model,
+            messages: [
+                { role: 'system', content: systemPrompt },
+                { role: 'user', content: prompt }
+            ],
+            temperature: 0.7,
+            maxTokens: 4096,
+            timeoutMs: codeTimeoutMs
+        });
+
+        if (!partsRes.ok) {
+            const errText = await partsRes.text();
+            throw new Error(`Generation failed: ${partsRes.status} ${errText}`);
+        }
+
+        const data = await partsRes.json();
+        const msg = data && data.choices && data.choices[0] && data.choices[0].message;
+        const content = (msg && (msg.content || msg.reasoning_content)) || '';
+        if (!content.trim()) throw new Error('AI 返回内容为空');
+
+        const { setup, animate } = parseAIOutput(content);
+        if (!setup || !String(setup).trim()) throw new Error('AI 未输出有效的 setup 代码');
+
+        // Wrap into a full EngineEffect module without template-literal injection.
+        return wrapAsEngineEffect(setup, animate);
+    }
 
     if (shouldUseBlueprintStage(process.env)) {
         const blueprintMessages = buildBlueprintMessages(prompt);
@@ -1091,6 +1150,8 @@ app.post('/api/generate-effect-v2', async (req, res) => {
         }
         let generatedCode = await runWithProviderFallback(providers, async (provider) => {
             return generateEffectV2FromPrompt(prompt, provider.apiKey, provider.baseUrl, provider.model, {
+                // Only /api/generate-effect-v2 enables wrapped_parts. Keep ?v=2 behavior unchanged.
+                outputMode: process.env.AI_V2_OUTPUT_MODE,
                 codeTimeoutMs: Math.max(1000, Math.min(90000, remainingBudgetMs() - 1500))
             });
         });
