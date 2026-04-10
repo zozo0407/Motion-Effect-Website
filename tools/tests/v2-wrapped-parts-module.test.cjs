@@ -21,6 +21,7 @@ const { wrapAsEngineEffect, parseAIOutput, cleanSnippet } = require('../creator/
 // parseAIOutput: split and clean
 {
   const raw = [
+    '<think>do not leak</think>',
     '```js',
     "import * as THREE from 'three';",
     '// === setup ===',
@@ -33,6 +34,7 @@ const { wrapAsEngineEffect, parseAIOutput, cleanSnippet } = require('../creator/
   const { setup, animate } = parseAIOutput(raw, { stripMarkdown: true });
   assert(setup.includes('this.mesh = new THREE.Mesh()'), 'setup should contain logic');
   assert(!setup.includes('import * as THREE'), 'setup should be cleaned');
+  assert(!setup.includes('<think>'), 'setup should not contain <think> prologue');
   assert(animate.includes('rotation.y'), 'animate should contain logic');
 }
 

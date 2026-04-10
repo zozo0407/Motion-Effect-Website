@@ -72,6 +72,7 @@ async function generateEffectV2FromPrompt(prompt, apiKey, baseUrl, model, option
             '',
             '【禁止】document./window./requestAnimationFrame/appendChild/getElementById',
             '【禁止】声明 const scene / const camera / const renderer',
+            '【禁止】重复声明 width / height / dpr（外层 wrapper 已创建内部尺寸变量，请直接使用 scene/camera/renderer/this.xxx 驱动动画）',
             '【禁止】THREE.*Helper（SpotLightHelper/PointLightHelper 等）',
             '【禁止】THREE.RoomEnvironment / RoomEnvironment（属于 three/examples 扩展，核心 three 中不存在，会导致运行时报错 not a constructor）',
             '【禁止】async/await',

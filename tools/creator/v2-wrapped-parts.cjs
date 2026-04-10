@@ -27,9 +27,19 @@ function stripMarkdownCodeFence(text) {
     return code;
 }
 
+function stripModelNonCodePrologue(text) {
+    // Some providers may prepend <think>...</think> or <analysis>...</analysis>.
+    // If left in-place, the generated module can fail with "Unexpected token '<'".
+    let s = typeof text === 'string' ? text : '';
+    s = s.replace(/^\s*<think>[\s\S]*?<\/think>\s*/i, '');
+    s = s.replace(/^\s*<analysis>[\s\S]*?<\/analysis>\s*/i, '');
+    return s;
+}
+
 function parseAIOutput(rawText, options = {}) {
     const stripMarkdown = options.stripMarkdown !== false;
-    const cleaned = (stripMarkdown ? stripMarkdownCodeFence(rawText) : String(rawText || '')).trim();
+    let cleaned = (stripMarkdown ? stripMarkdownCodeFence(rawText) : String(rawText || '')).trim();
+    cleaned = stripModelNonCodePrologue(cleaned).trim();
 
     if (cleaned.includes('---SPLIT---')) {
         const parts = cleaned.split(/---SPLIT---/);
@@ -76,15 +86,16 @@ function wrapAsEngineEffect(setupCode, animateCode) {
     out.push('  onStart(ctx) {');
     out.push('    const size = (ctx && ctx.size) ? ctx.size : (ctx || {});');
     out.push('    const canvas = ctx && ctx.canvas ? ctx.canvas : undefined;');
-    out.push('    const width = Math.max(1, Math.floor(size.width || 1));');
-    out.push('    const height = Math.max(1, Math.floor(size.height || 1));');
-    out.push('    const dpr = Math.max(1, Math.min(2, Number(size.dpr) || 1));');
+    // Use internal names to avoid collisions if AI declares `const width/height/dpr`.
+    out.push('    const __width = Math.max(1, Math.floor(size.width || 1));');
+    out.push('    const __height = Math.max(1, Math.floor(size.height || 1));');
+    out.push('    const __dpr = Math.max(1, Math.min(2, Number(size.dpr) || 1));');
     out.push('    this.renderer = new THREE.WebGLRenderer({ canvas, antialias: true, alpha: true });');
-    out.push('    this.renderer.setPixelRatio(dpr);');
-    out.push('    this.renderer.setSize(width, height, false);');
+    out.push('    this.renderer.setPixelRatio(__dpr);');
+    out.push('    this.renderer.setSize(__width, __height, false);');
     out.push('    this.renderer.outputColorSpace = THREE.SRGBColorSpace;');
     out.push('    this.scene = new THREE.Scene();');
-    out.push('    this.camera = new THREE.PerspectiveCamera(60, width / height, 0.1, 1000);');
+    out.push('    this.camera = new THREE.PerspectiveCamera(60, __width / __height, 0.1, 1000);');
     out.push('    this.camera.position.set(0, 0, 5);');
     out.push('    this.scene.add(this.camera);');
     out.push('    const scene = this.scene;');
@@ -135,4 +146,3 @@ function wrapAsEngineEffect(setupCode, animateCode) {
 }
 
 module.exports = { cleanSnippet, parseAIOutput, wrapAsEngineEffect };
-
