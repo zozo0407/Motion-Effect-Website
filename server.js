@@ -59,16 +59,19 @@ async function generateEffectV2FromPrompt(prompt, apiKey, baseUrl, model, option
             '【setup】用于初始化场景。你可以添加灯光/几何体/材质/粒子等。',
             '可直接使用变量（已由外部创建，不要重新声明）：scene / camera / renderer',
             '需要在 animate 中访问的对象，必须挂在 this 上，例如：this.mesh = new THREE.Mesh(...)',
+            '如需可调参数，请统一从 this.params 读取，例如：this.params.primaryColor / this.params.speed。',
             '',
             '【animate】每帧调用一次。可直接使用变量：time / deltaTime，并通过 this.xxx 访问 setup 对象。',
             '不要调用 renderer.render()（外层会自动 render）。',
             '',
-            '【输出格式（严格）】只输出两段纯 JavaScript，用 ---SPLIT--- 分隔；不要 markdown/code fence；不要 import/export/class；不要解释文字：',
+            '【输出格式（严格）】必须输出三段内容：setup、animate、UI JSON。不要 markdown/code fence；不要 import/export/class；不要解释文字：',
             '// === setup ===',
             '(setup code)',
             '---SPLIT---',
             '// === animate ===',
             '(animate code)',
+            '---UI---',
+            '[{ "bind":"primaryColor", "name":"主色调", "type":"color", "value":"#00f2ff" }, ...]',
             '',
             '【禁止】document./window./requestAnimationFrame/appendChild/getElementById',
             '【禁止】声明 const scene / const camera / const renderer',
@@ -76,6 +79,15 @@ async function generateEffectV2FromPrompt(prompt, apiKey, baseUrl, model, option
             '【禁止】THREE.*Helper（SpotLightHelper/PointLightHelper 等）',
             '【禁止】THREE.RoomEnvironment / RoomEnvironment（属于 three/examples 扩展，核心 three 中不存在，会导致运行时报错 not a constructor）',
             '【禁止】async/await',
+            '',
+            '【UI JSON 规范（严格）】',
+            '1) ---UI--- 后面必须是“纯 JSON 数组”，不能有任何多余文字/注释/markdown。',
+            '2) 控件最多 6 个；超出将被丢弃。',
+            '3) 允许的 type 仅限：color / range / checkbox / select。',
+            '4) bind 必须匹配正则：^[a-zA-Z_][a-zA-Z0-9_]{0,31}$（最长 32）。',
+            '5) range 字段：min/max/step/value 必须是数字。',
+            '6) select 字段：options 必须是字符串数组（最多 10 项），value 必须是 options 里的值或索引。',
+            '7) 请确保 setup/animate 里会使用到这些 bind（通过 this.params.<bind>），这样调节才有效。',
             '',
             '【质量】深色背景、配色低饱和、有层次、代码简洁（setup+animate 合计 <= 120 行）。'
         ].join('\n');
@@ -104,11 +116,11 @@ async function generateEffectV2FromPrompt(prompt, apiKey, baseUrl, model, option
         const content = (msg && (msg.content || msg.reasoning_content)) || '';
         if (!content.trim()) throw new Error('AI 返回内容为空');
 
-        const { setup, animate } = parseAIOutput(content);
+        const { setup, animate, uiConfig } = parseAIOutput(content);
         if (!setup || !String(setup).trim()) throw new Error('AI 未输出有效的 setup 代码');
 
         // Wrap into a full EngineEffect module without template-literal injection.
-        return wrapAsEngineEffect(setup, animate);
+        return wrapAsEngineEffect(setup, animate, uiConfig);
     }
 
     if (shouldUseBlueprintStage(process.env)) {
