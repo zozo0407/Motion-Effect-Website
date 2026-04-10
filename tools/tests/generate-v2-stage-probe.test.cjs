@@ -12,8 +12,24 @@ assert(server.includes("[v2][${stage}] response status="), 'server.js should log
 assert(server.includes("[v2][${stage}] timeout"), 'server.js should log stage timeout');
 assert(server.includes("stage: 'blueprint'"), 'generateEffectV2FromPrompt should call runV2Stage for blueprint');
 assert(server.includes("stage: 'code'"), 'generateEffectV2FromPrompt should call runV2Stage for code');
-assert(server.includes('timeoutMs: 25000'), 'blueprint stage should have a dedicated timeout');
-assert(server.includes('timeoutMs: 90000'), 'code stage should have a dedicated timeout');
+// Allow either a literal timeout (older versions) or a named variable (current implementation).
+// We still assert the default values exist so we don't regress stage budgets.
+assert(
+  server.includes('timeoutMs: 25000') || server.includes('timeoutMs: blueprintTimeoutMs'),
+  'blueprint stage should pass a dedicated timeout to runV2Stage'
+);
+assert(
+  server.includes('timeoutMs: 90000') || server.includes('timeoutMs: codeTimeoutMs'),
+  'code stage should pass a dedicated timeout to runV2Stage'
+);
+assert(
+  server.includes('const blueprintTimeoutMs') && server.includes(': 25000'),
+  'server.js should define blueprintTimeoutMs default 25000ms'
+);
+assert(
+  server.includes('const codeTimeoutMs') && server.includes(': 90000'),
+  'server.js should define codeTimeoutMs default 90000ms'
+);
 
 const prompt = '极简风，柔和配色，旋转几何体';
 const messages = buildCodeMessages(prompt, defaultBlueprint(prompt), 'contract');
