@@ -53,4 +53,53 @@ const { wrapAsEngineEffect, parseAIOutput, cleanSnippet } = require('../creator/
   assert(code.includes('${1+2}'), 'wrap should carry through snippet content');
 }
 
+// parseAIOutput: UI block (---UI---) should be extracted as JSON array
+{
+  const raw = [
+    '// === setup ===',
+    'this.mesh = new THREE.Mesh();',
+    '---SPLIT---',
+    '// === animate ===',
+    'this.mesh.rotation.y += deltaTime;',
+    '---UI---',
+    JSON.stringify([
+      { bind: 'primaryColor', name: '主色调', type: 'color', value: '#00f2ff' },
+      { bind: 'speed', name: '速度', type: 'range', min: 0.1, max: 5, step: 0.05, value: 1.0 },
+    ]),
+  ].join('\n');
+  const out = parseAIOutput(raw, { stripMarkdown: false });
+  assert(out && typeof out === 'object', 'parseAIOutput should return object');
+  assert(out.setup.includes('this.mesh'), 'setup should contain logic');
+  assert(out.animate.includes('rotation.y'), 'animate should contain logic');
+  assert(Array.isArray(out.uiConfig), 'uiConfig should be an array when ---UI--- is present');
+  assert(out.uiConfig.length === 2, 'uiConfig should have 2 items');
+  assert(out.uiConfig[0].bind === 'primaryColor', 'first bind should match');
+}
+
+// parseAIOutput: UI validation should drop invalid items and cap at 6
+{
+  const ui = [
+    { bind: 'ok1', name: 'A', type: 'range', min: 0, max: 1, value: 0.5 },
+    { bind: 'ok2', name: 'B', type: 'color', value: '#ffffff' },
+    { bind: 'bad-bind-!', name: 'BAD', type: 'range', min: 0, max: 1, value: 0.5 },
+    { bind: 'ok3', name: 'C', type: 'checkbox', value: true },
+    { bind: 'ok4', name: 'D', type: 'select', options: ['x', 'y'], value: 'x' },
+    { bind: 'ok5', name: 'E', type: 'range', min: 0, max: 10, value: 2 },
+    { bind: 'ok6', name: 'F', type: 'range', min: 0, max: 10, value: 3 },
+    { bind: 'ok7', name: 'G', type: 'range', min: 0, max: 10, value: 4 },
+    { bind: 'badType', name: 'H', type: 'text', value: 'nope' },
+  ];
+  const raw = ['this.group = new THREE.Group();', '---SPLIT---', 'this.group.rotation.y = time;', '---UI---', JSON.stringify(ui)].join(
+    '\n',
+  );
+  const out = parseAIOutput(raw, { stripMarkdown: false });
+  assert(Array.isArray(out.uiConfig), 'uiConfig should exist');
+  assert(out.uiConfig.length === 6, 'uiConfig should be capped at 6');
+  assert(
+    out.uiConfig.every((it) => ['color', 'range', 'checkbox', 'select'].includes(it.type)),
+    'only allowed types',
+  );
+  assert(out.uiConfig.every((it) => /^[A-Za-z_][A-Za-z0-9_]{0,31}$/.test(it.bind)), 'bind regex enforced');
+}
+
 console.log('v2-wrapped-parts-module.test.cjs passed');
