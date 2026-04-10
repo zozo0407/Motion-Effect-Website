@@ -1035,12 +1035,17 @@ function findUnsafeCtxHelperUsage(code) {
     const src = String(code || '');
     const methodRe = /\n\s*([A-Za-z_$][\w$]*)\s*\(([^)]*)\)\s*\{([\s\S]*?)\n\s*\}/g;
     const lifecycle = new Set(['constructor', 'onStart', 'onUpdate', 'onResize', 'onDestroy', 'getUIConfig', 'setParam']);
+    // NOTE: Our regex is a best-effort heuristic, not a real JS parser.
+    // It can accidentally match control statements like `for(...) { ... }` as if they were methods.
+    // Skip keyword names to avoid triggering unnecessary repair/degraded paths.
+    const keywordNames = new Set(['for', 'if', 'while', 'switch', 'catch']);
     let m;
     while ((m = methodRe.exec(src))) {
         const name = m[1];
         const params = m[2] || '';
         const body = m[3] || '';
         if (lifecycle.has(name)) continue;
+        if (keywordNames.has(name)) continue;
         if (/\bctx\b/.test(params)) continue;
         if (/\bctx\./.test(body)) {
             return name;
