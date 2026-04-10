@@ -119,6 +119,7 @@ function parseAIOutput(rawText, options = {}) {
 
     // Optional UI section: ---UI--- + pure JSON array
     let uiConfig = null;
+    let uiParseFailed = false;
     if (cleaned.includes('---UI---')) {
         const parts = cleaned.split(/---UI---/);
         cleaned = (parts[0] || '').trim();
@@ -136,6 +137,7 @@ function parseAIOutput(rawText, options = {}) {
                     }
                 } catch (_) {
                     uiConfig = [];
+                    uiParseFailed = true;
                 }
             }
         } else {
@@ -149,10 +151,10 @@ function parseAIOutput(rawText, options = {}) {
         let animate = (parts[1] || '').trim();
         setup = cleanSnippet(setup);
         animate = cleanSnippet(animate);
-        if (setup) return { setup, animate: animate || '', uiConfig };
+        if (setup) return { setup, animate: animate || '', uiConfig, uiParseFailed };
     }
 
-    return { setup: cleanSnippet(cleaned), animate: '', uiConfig };
+    return { setup: cleanSnippet(cleaned), animate: '', uiConfig, uiParseFailed };
 }
 
 function wrapAsEngineEffect(setupCode, animateCode, uiConfig) {

@@ -101,7 +101,12 @@ async function generateEffectV2FromPrompt(prompt, apiKey, baseUrl, model, option
                 { role: 'system', content: systemPrompt },
                 { role: 'user', content: prompt }
             ],
-            temperature: 0.7,
+            temperature: (() => {
+                const raw = process.env.AI_WRAPPED_PARTS_TEMPERATURE;
+                const n = typeof raw === 'string' && raw.trim() ? Number(raw) : 0.25;
+                // Clamp: strict-format tasks get worse with high temperature.
+                return Number.isFinite(n) ? Math.max(0, Math.min(1, n)) : 0.25;
+            })(),
             maxTokens: 4096,
             timeoutMs: codeTimeoutMs
         });
@@ -116,7 +121,77 @@ async function generateEffectV2FromPrompt(prompt, apiKey, baseUrl, model, option
         const content = (msg && (msg.content || msg.reasoning_content)) || '';
         if (!content.trim()) throw new Error('AI 返回内容为空');
 
-        const { setup, animate, uiConfig } = parseAIOutput(content);
+        const wantsUISection = content.includes('---UI---');
+        const hasSplit = content.includes('---SPLIT---');
+        const { setup, animate, uiConfig, uiParseFailed } = parseAIOutput(content);
+
+        // Lightweight retry for format-only failures (one extra call, same model).
+        // This is cheaper and more reliable than full "repair" because we ask it to only reformat.
+        const isFormatFailure =
+            !hasSplit ||
+            !wantsUISection ||
+            !setup ||
+            !String(setup).trim() ||
+            uiParseFailed;
+
+        if (isFormatFailure) {
+            const reformatSystem = [
+                '你是严格的“格式化器/重排器”。你的任务：只把输入内容重排为指定格式，绝对不要改动任何代码逻辑。',
+                '',
+                '输入内容是上一轮模型的输出，可能缺少分隔符或夹杂文字。',
+                '',
+                '【必须输出格式（严格）】',
+                '// === setup ===',
+                '(setup code: 仅函数体，使用 scene/camera/renderer/this.xxx，不要 import/export/class)',
+                '---SPLIT---',
+                '// === animate ===',
+                '(animate code: 仅函数体，可用 time/deltaTime/this.xxx，不要 renderer.render())',
+                '---UI---',
+                '(纯 JSON 数组，最多 6 项；type 仅限 color/range/checkbox/select；bind 正则 ^[a-zA-Z_][a-zA-Z0-9_]{0,31}$ )',
+                '',
+                '【重要】',
+                '1) 只能做“重排/补分隔符/去掉解释文字/提取代码片段”，不要新增或修改任何逻辑语句。',
+                '2) 如果 UI JSON 缺失，请根据代码中可调参数推断最少 1-3 个控件；如果完全无法推断，输出空数组 []。',
+                '3) 除了三段内容本身，不要输出任何别的字符。',
+            ].join('\n');
+
+            const reformatUser = [
+                '请把下面内容重排为严格格式：',
+                '---BEGIN---',
+                content,
+                '---END---',
+            ].join('\n');
+
+            const retryTimeout = Math.max(5000, Math.min(20000, Math.floor(codeTimeoutMs / 3)));
+            const retryRes = await runV2Stage({
+                stage: 'parts_reformat',
+                url,
+                apiKey,
+                model,
+                messages: [
+                    { role: 'system', content: reformatSystem },
+                    { role: 'user', content: reformatUser }
+                ],
+                temperature: 0.0,
+                maxTokens: 4096,
+                timeoutMs: retryTimeout
+            });
+
+            if (!retryRes.ok) {
+                const errText = await retryRes.text();
+                throw new Error(`Format retry failed: ${retryRes.status} ${errText}`);
+            }
+
+            const retryData = await retryRes.json();
+            const retryMsg = retryData && retryData.choices && retryData.choices[0] && retryData.choices[0].message;
+            const retryContent = (retryMsg && (retryMsg.content || retryMsg.reasoning_content)) || '';
+            if (!retryContent.trim()) throw new Error('格式重排返回内容为空');
+
+            const reparsed = parseAIOutput(retryContent);
+            if (!reparsed.setup || !String(reparsed.setup).trim()) throw new Error('AI 未输出有效的 setup 代码');
+            return wrapAsEngineEffect(reparsed.setup, reparsed.animate, reparsed.uiConfig);
+        }
+
         if (!setup || !String(setup).trim()) throw new Error('AI 未输出有效的 setup 代码');
 
         // Wrap into a full EngineEffect module without template-literal injection.
