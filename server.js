@@ -63,6 +63,9 @@ async function generateEffectV2FromPrompt(prompt, apiKey, baseUrl, model, option
             '',
             '【animate】每帧调用一次。可直接使用变量：time / deltaTime，并通过 this.xxx 访问 setup 对象。',
             '不要调用 renderer.render()（外层会自动 render）。',
+            '【可见对象闭环（严格）】如果你定义了 Geometry / Material / shader / uniforms，必须把它们组装成一个实际可渲染对象，例如 new THREE.Mesh(...) / new THREE.Points(...) / new THREE.Line(...)。',
+            '【可见对象闭环（严格）】在 setup 结束前，必须调用 scene.add(...) 把至少一个非相机对象加入场景；不能只停留在 geometry、material、vertexShader、fragmentShader、uniforms 的变量声明阶段。',
+            '【首帧可见（严格）】输出必须保证首帧能看到内容，禁止生成只有相机和空场景的代码。',
             '',
             '【输出格式（严格）】必须输出三段内容：setup、animate、UI JSON。不要 markdown/code fence；不要 import/export/class；不要解释文字：',
             '// === setup ===',
@@ -1069,6 +1072,24 @@ function normalizeEngineEffectExport(code) {
     return s;
 }
 
+function findVisibleSceneClosureIssue(code) {
+    const src = String(code || '');
+    const resourceHints = /\bnew THREE\.\w*Geometry\b|\bnew THREE\.\w*Material\b|\bvertexShader\b|\bfragmentShader\b|\buniforms\b/;
+    if (!resourceHints.test(src)) return null;
+
+    const renderableCtor = /\bnew THREE\.(Mesh|Points|Line|LineSegments|InstancedMesh|Sprite)\s*\(/;
+    const sceneAddMatches = src.match(/\b(?:this\.)?scene\.add\s*\(/g) || [];
+    const userSceneAdds = Math.max(0, sceneAddMatches.length - 1); // wrapper already adds camera once
+
+    if (!renderableCtor.test(src)) {
+        return '检测到定义了 Geometry / Material / shader，但没有创建实际可渲染对象（如 new THREE.Mesh / Points / Line），这会导致黑屏。';
+    }
+    if (userSceneAdds <= 0) {
+        return '检测到定义了 Geometry / Material / shader，但没有把实际可见对象加入 scene（缺少 scene.add(...)），这会导致黑屏。';
+    }
+    return null;
+}
+
 function autoFixEngineEffectCode(code) {
     if (typeof code !== 'string' || !code.trim()) return code;
     code = stripModelNonCodePrologue(code);
@@ -1154,6 +1175,8 @@ function validateEngineEffectCode(code) {
     if (/\bclass\s+ScriptScene\b/.test(code)) return '检测到 ScriptScene（应输出 EngineEffect）';
     if (/\bctx\.renderer\b/.test(code)) return '检测到 ctx.renderer（预览引擎不会注入 renderer，请在 onStart(ctx) 内使用 ctx.canvas/ctx.gl 自行创建 THREE.WebGLRenderer）';
     if (/\brequestAnimationFrame\s*\(/.test(code)) return '检测到 requestAnimationFrame（禁止使用，渲染应由 onUpdate 驱动）';
+    const visibleSceneIssue = findVisibleSceneClosureIssue(code);
+    if (visibleSceneIssue) return visibleSceneIssue;
     return null;
 }
 

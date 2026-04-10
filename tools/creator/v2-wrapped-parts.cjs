@@ -157,10 +157,48 @@ function parseAIOutput(rawText, options = {}) {
     return { setup: cleanSnippet(cleaned), animate: '', uiConfig, uiParseFailed };
 }
 
+function escapeRegExp(text) {
+    return String(text || '').replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+function hasBareIdentifierReference(code, name) {
+    const re = new RegExp(`(^|[^.\\w$])${escapeRegExp(name)}\\b`);
+    return re.test(String(code || ''));
+}
+
+function buildSharedLocalBridge(setupLines, animateCode) {
+    const rewrittenSetupLines = [];
+    const bridgedNames = [];
+
+    for (const rawLine of setupLines) {
+        const line = String(rawLine || '');
+        const m = line.match(/^(\s*)(const|let|var)\s+([A-Za-z_$][\w$]*)\s*=\s*([\s\S]*?)\s*;?\s*$/);
+        if (!m) {
+            rewrittenSetupLines.push(line);
+            continue;
+        }
+        const [, indent, , name, expr] = m;
+        if (!hasBareIdentifierReference(animateCode, name)) {
+            rewrittenSetupLines.push(line);
+            continue;
+        }
+        bridgedNames.push(name);
+        rewrittenSetupLines.push(`${indent}let ${name} = this.${name} = ${expr};`);
+    }
+
+    return {
+        setupLines: rewrittenSetupLines,
+        onUpdatePrelude: bridgedNames.map((name) => `    let ${name} = this.${name};`),
+        onUpdatePostlude: bridgedNames.map((name) => `    this.${name} = ${name};`),
+    };
+}
+
 function wrapAsEngineEffect(setupCode, animateCode, uiConfig) {
-    const setupLines = String(setupCode || '').split('\n');
+    const rawSetupLines = String(setupCode || '').split('\n');
     const animateLines = String(animateCode || '').split('\n');
     const safeUIConfig = validateAndNormalizeUIConfig(uiConfig);
+    const bridge = buildSharedLocalBridge(rawSetupLines, animateCode);
+    const setupLines = bridge.setupLines;
 
     // IMPORTANT: Do NOT use template literals to embed AI code. Use join() to avoid `${}` / backtick breakage.
     const out = [];
@@ -224,11 +262,21 @@ function wrapAsEngineEffect(setupCode, animateCode, uiConfig) {
     out.push('  onStart(ctx) {');
     out.push('    const size = (ctx && ctx.size) ? ctx.size : (ctx || {});');
     out.push('    const canvas = ctx && ctx.canvas ? ctx.canvas : undefined;');
+    out.push('    const container = ctx && ctx.container ? ctx.container : (canvas && canvas.parentNode ? canvas.parentNode : null);');
     // Use internal names to avoid collisions if AI declares `const width/height/dpr`.
     out.push('    const __width = Math.max(1, Math.floor(size.width || 1));');
     out.push('    const __height = Math.max(1, Math.floor(size.height || 1));');
     out.push('    const __dpr = Math.max(1, Math.min(2, Number(size.dpr) || 1));');
-    out.push('    this.renderer = new THREE.WebGLRenderer({ canvas, antialias: true, alpha: true });');
+    out.push('    try {');
+    out.push('      this.renderer = new THREE.WebGLRenderer({ canvas, antialias: true, alpha: true });');
+    out.push('    } catch (err) {');
+    out.push('      this.renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });');
+    out.push('      if (canvas && canvas.parentNode && this.renderer && this.renderer.domElement) {');
+    out.push('        canvas.parentNode.replaceChild(this.renderer.domElement, canvas);');
+    out.push('      } else if (container && this.renderer && this.renderer.domElement && typeof container.appendChild === "function") {');
+    out.push('        container.appendChild(this.renderer.domElement);');
+    out.push('      }');
+    out.push('    }');
     out.push('    this.renderer.setPixelRatio(__dpr);');
     out.push('    this.renderer.setSize(__width, __height, false);');
     out.push('    this.renderer.outputColorSpace = THREE.SRGBColorSpace;');
@@ -239,6 +287,12 @@ function wrapAsEngineEffect(setupCode, animateCode, uiConfig) {
     out.push('    const scene = this.scene;');
     out.push('    const camera = this.camera;');
     out.push('    const renderer = this.renderer;');
+    out.push('    // Safe default lighting: prevents black screens when AI uses light-dependent materials but forgets lights.');
+    out.push('    this.__defaultAmbientLight = new THREE.AmbientLight(0xffffff, 0.85);');
+    out.push('    this.__defaultKeyLight = new THREE.DirectionalLight(0xffffff, 1.15);');
+    out.push('    this.__defaultKeyLight.position.set(3, 4, 6);');
+    out.push('    scene.add(this.__defaultAmbientLight);');
+    out.push('    scene.add(this.__defaultKeyLight);');
     out.push('    // ===== AI 生成的 setup 代码 =====');
     for (const line of setupLines) out.push(`    ${line}`);
     out.push('    // ===== setup 结束 =====');
@@ -251,9 +305,11 @@ function wrapAsEngineEffect(setupCode, animateCode, uiConfig) {
     out.push("    const __speed = (this.params && Number.isFinite(this.params.speed)) ? this.params.speed : parseFloat(String((this.params && this.params.speed) || 1.0));");
     out.push("    const time = __rawTime * (Number.isFinite(__speed) ? __speed : 1.0);");
     out.push("    const deltaTime = __rawDelta * (Number.isFinite(__speed) ? __speed : 1.0);");
+    for (const line of bridge.onUpdatePrelude) out.push(line);
     out.push('    // ===== AI 生成的 animate 代码 =====');
     for (const line of animateLines) out.push(`    ${line}`);
     out.push('    // ===== animate 结束 =====');
+    for (const line of bridge.onUpdatePostlude) out.push(line);
     out.push('    if (this.renderer && this.scene && this.camera) this.renderer.render(this.scene, this.camera);');
     out.push('  }');
     out.push('');

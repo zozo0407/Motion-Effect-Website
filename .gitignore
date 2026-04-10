@@ -12,3 +12,4 @@
 .vscode/
 .temp_previews/
 /.worktrees/
+.untracked_backup/

@@ -102,4 +102,54 @@ const { wrapAsEngineEffect, parseAIOutput, cleanSnippet } = require('../creator/
   assert(out.uiConfig.every((it) => /^[A-Za-z_][A-Za-z0-9_]{0,31}$/.test(it.bind)), 'bind regex enforced');
 }
 
+// wrapAsEngineEffect: should bridge setup locals into onUpdate when AI forgets `this.`
+{
+  const setup = [
+    'const cubeGroup = new THREE.Group();',
+    'const angles = [0, 1, 2];',
+    'scene.add(cubeGroup);',
+  ].join('\n');
+  const animate = [
+    'cubeGroup.rotation.y += deltaTime;',
+    'angles[0] += 0.1;',
+  ].join('\n');
+  const code = wrapAsEngineEffect(setup, animate);
+  assert(
+    code.includes('let cubeGroup = this.cubeGroup = new THREE.Group();'),
+    'setup local should be mirrored onto this for cross-method access',
+  );
+  assert(code.includes('let angles = this.angles = [0, 1, 2];'), 'setup array local should be mirrored onto this');
+  assert(code.includes('let cubeGroup = this.cubeGroup;'), 'onUpdate should rehydrate mirrored local from this');
+  assert(code.includes('let angles = this.angles;'), 'onUpdate should rehydrate array local from this');
+  assert(code.includes('this.cubeGroup = cubeGroup;'), 'onUpdate should sync local back to this');
+  assert(code.includes('this.angles = angles;'), 'onUpdate should sync array local back to this');
+}
+
+// wrapAsEngineEffect: should fall back to creating its own renderer if ctx.canvas WebGL init fails
+{
+  const code = wrapAsEngineEffect('this.group = new THREE.Group();\nscene.add(this.group);', 'this.group.rotation.y += deltaTime;');
+  assert(
+    code.includes("try {") && code.includes("this.renderer = new THREE.WebGLRenderer({ canvas, antialias: true, alpha: true });"),
+    'wrapper should attempt ctx.canvas renderer first',
+  );
+  assert(code.includes("this.renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });"), 'wrapper should have fallback renderer init');
+  assert(
+    code.includes("canvas.parentNode.replaceChild(this.renderer.domElement, canvas);") ||
+      code.includes("container.appendChild(this.renderer.domElement);"),
+    'wrapper should attach fallback canvas into DOM',
+  );
+}
+
+// wrapAsEngineEffect: should inject safe default lights to avoid black unlit Phong/Standard materials
+{
+  const code = wrapAsEngineEffect(
+    "const material = new THREE.MeshPhongMaterial({ color: 0xffaa00 });\nthis.mesh = new THREE.Mesh(new THREE.BoxGeometry(1,1,1), material);\nscene.add(this.mesh);",
+    'this.mesh.rotation.y += deltaTime;',
+  );
+  assert(code.includes('this.__defaultAmbientLight = new THREE.AmbientLight('), 'wrapper should add default ambient light');
+  assert(code.includes('this.__defaultKeyLight = new THREE.DirectionalLight('), 'wrapper should add default directional light');
+  assert(code.includes('scene.add(this.__defaultAmbientLight);'), 'wrapper should attach ambient light to scene');
+  assert(code.includes('scene.add(this.__defaultKeyLight);'), 'wrapper should attach key light to scene');
+}
+
 console.log('v2-wrapped-parts-module.test.cjs passed');
