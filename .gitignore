@@ -6,6 +6,7 @@
 *.log
 .env
 .env.*
+!.env.example
 参考/
 暂时放置/
 .vscode/

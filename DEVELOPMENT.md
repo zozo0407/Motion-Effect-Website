@@ -58,6 +58,13 @@
 - **构建脚本**: `package.json` (根目录)
 - **资源目录（assets-only）**: `my-motion-portfolio/public/`（主站运行时静态资源与 demos）
 
+### 生成链路开关（稳定模式）
+- 本地开发默认推荐开启 v2 稳定模式（AI 仅输出 `setup+animate`，后端模板包装）：
+  - 在本机 `.env` 添加：`AI_V2_OUTPUT_MODE=wrapped_parts`（`.env` 不会提交）
+  - 或临时启动：`AI_V2_OUTPUT_MODE=wrapped_parts AI_V2_TOTAL_BUDGET_MS=90000 node server.js`
+- 部署上线需要在运行环境里设置同名环境变量，才能默认开启稳定模式；否则走旧的 v2 两阶段逻辑。
+- 已提供 `.env.example`（无密钥），记录必须/可选环境变量，请根据部署方式把其中项配置为真实值。
+
 ### Creator 工具链（本地创作/管理）
 - **启动命令**: `npm run creator`
 - **入口文档**: `tools/creator/README.md`
