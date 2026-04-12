@@ -2,19 +2,14 @@ const fs = require('fs');
 const path = require('path');
 const assert = require('assert');
 
-const serverPath = path.join(__dirname, '..', '..', 'server.js');
-const server = fs.readFileSync(serverPath, 'utf8');
+const config = fs.readFileSync(path.join(__dirname, '..', '..', 'server', 'config.js'), 'utf8');
+const route = fs.readFileSync(path.join(__dirname, '..', '..', 'server', 'routes', 'generate-v2.js'), 'utf8');
+const skeleton = fs.readFileSync(path.join(__dirname, '..', '..', 'server', 'services', 'skeleton-router.js'), 'utf8');
 
-assert(server.includes('AI_ENABLE_MINIMAL_FALLBACK'), 'server.js should include AI_ENABLE_MINIMAL_FALLBACK flag');
-assert(server.includes('buildMinimalFallbackPayload'), 'server.js should wire minimal fallback payload builder');
-
-const routeStart = server.indexOf("app.post('/api/generate-effect-v2'");
-assert(routeStart >= 0, 'server.js should contain the /api/generate-effect-v2 route');
-const routeEnd = server.indexOf('// API: Get Demos', routeStart);
-assert(routeEnd > routeStart, 'server.js should continue with later routes after /api/generate-effect-v2');
-
-const v2Route = server.slice(routeStart, routeEnd);
-assert(v2Route.includes('minimalFallbackEnabled'), 'v2 route should compute minimal fallback enable flag');
-assert(v2Route.includes('buildMinimalFallbackPayload'), 'v2 route should use minimal fallback on failures');
+assert(config.includes('AI_ENABLE_MINIMAL_FALLBACK') || config.includes('isMinimalFallbackEnabled'), 'server/config.js should include minimal fallback config wiring');
+assert(skeleton.includes('buildMinimalFallbackPayload'), 'skeleton-router.js should expose minimal fallback payload builder');
+assert(route.includes('minimalFallbackEnabled'), 'generate-v2 route should compute minimal fallback enable flag');
+assert(route.includes('buildMinimalFallbackPayload'), 'generate-v2 route should use minimal fallback on failures');
 
 console.log('generate-v2-minimal-fallback-wiring.test.cjs passed');
+

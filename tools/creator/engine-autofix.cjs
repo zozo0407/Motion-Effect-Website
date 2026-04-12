@@ -114,7 +114,55 @@ function fixUnsafeCtxHelperUsage(code) {
   return out;
 }
 
+function fixTimeReferenceInOnStart(code) {
+  const src = String(code || '');
+  const onStartRe = /\n(\s*)onStart\s*\(\s*ctx[^)]*\)\s*\{([\s\S]*?)(?=\n\s*(?:onUpdate|onResize|onDestroy|getUIConfig|setParam)\s*\(|\n\})/;
+
+  const m = src.match(onStartRe);
+  if (!m) return src;
+
+  const body = m[2];
+  if (!/\btime\b/.test(body)) return src;
+
+  const hasTimeParam = /\bonStart\s*\(\s*ctx\s*,\s*time\b/.test(src);
+  if (hasTimeParam) return src;
+
+  let fixed = src.replace(
+    /\n(\s*)onStart\s*\(\s*ctx\s*\)\s*\{/,
+    '\n$1onStart(ctx) {\n$1  const time = 0;'
+  );
+
+  if (fixed === src) {
+    fixed = src.replace(
+      /\n(\s*)onStart\s*\(\s*ctx\s*,\s*[^)]*\)\s*\{/,
+      (match, indent) => {
+        return match.replace(/\bonStart\s*\(\s*ctx\s*,\s*time\s*(?:,\s*[^)]*)?\)/, 'onStart(ctx)');
+      }
+    );
+    if (!/const time = 0;/.test(fixed)) {
+      fixed = fixed.replace(
+        /\n(\s*)onStart\s*\(\s*ctx[^)]*\)\s*\{/,
+        '\n$1onStart(ctx) {\n$1  const time = 0;'
+      );
+    }
+  }
+
+  return fixed;
+}
+
+function fixTimeReferenceOutsideOnUpdate(code) {
+  let src = String(code || '');
+
+  const lifecycleWithTime = /\bonStart\s*\([\s\S]*?\n\s*\}/g;
+  const lifecycleOther = /\b(onResize|onDestroy|getUIConfig|setParam)\s*\([\s\S]*?\n\s*\}/g;
+
+  src = fixTimeReferenceInOnStart(src);
+
+  return src;
+}
+
 module.exports = {
   ensureOnUpdateMethod,
-  fixUnsafeCtxHelperUsage
+  fixUnsafeCtxHelperUsage,
+  fixTimeReferenceOutsideOnUpdate
 };

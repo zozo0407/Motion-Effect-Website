@@ -601,241 +601,54 @@
                     <div class="font-mono text-capcut-green text-xs animate-pulse">正在加载模块 / LOADING...</div>
                 </div>
                 <iframe id="content-frame" class="w-full h-full border-0 bg-black"></iframe>
-                <div id="lab-ui-top-left" class="absolute top-0 left-0 z-[6] pointer-events-auto"></div>
-                <div id="lab-ui-top-right" class="absolute top-3 right-3 z-[6] pointer-events-auto flex items-start gap-2">
-                    <button onclick="triggerExportScriptScene()" style="position:relative;z-index:100000;padding:8px 12px;background:rgba(0,0,0,0.6);color:#fff;border:1px solid #444;border-radius:4px;cursor:pointer;font-family:monospace;pointer-events:auto;">导出脚本</button>
-                    <button onclick="triggerExportGameJS()" style="position:relative;z-index:100000;padding:8px 12px;background:rgba(0,0,0,0.6);color:#fff;border:1px solid #444;border-radius:4px;cursor:pointer;font-family:monospace;pointer-events:auto;">导出 game.js</button>
-                    <button onclick="openExportSettings()" style="position:relative;z-index:100000;padding:8px 12px;background:rgba(0,0,0,0.6);color:#fff;border:1px solid #444;border-radius:4px;cursor:pointer;font-family:monospace;pointer-events:auto;">导出设置</button>
-                    <button id="global-code-btn" style="position:relative;z-index:100000;padding:8px 12px;background:rgba(0,0,0,0.6);color:#fff;border:1px solid #444;border-radius:4px;cursor:pointer;font-family:monospace;pointer-events:auto;">代码 / Code</button>
-                </div>
-            </div>
-
-            <!-- Global Code Workbench (Replacing Simple Modal) -->
-            <div id="global-workbench" class="fixed top-0 right-0 w-1/2 h-full bg-[#141414]/95 backdrop-blur-xl z-[120] border-l border-white/10 flex flex-col shadow-2xl transition-transform duration-300 translate-x-full hidden">
-                <div id="workbench-resize" class="absolute left-0 top-0 w-1 h-full cursor-ew-resize hover:bg-capcut-green/50 transition-colors z-50"></div>
-                
-                <!-- Toolbar -->
-                <div class="h-12 border-b border-white/10 flex items-center justify-between px-4 bg-white/5">
-                    <div class="flex items-center gap-3">
-                        <span class="text-capcut-green font-mono text-xs font-bold tracking-widest">🛠️ 视觉工作台 / VFX WORKBENCH</span>
-                        <span class="text-[10px] text-gray-500 font-mono" id="workbench-file-name">只读模式 / READ-ONLY</span>
-                    </div>
-                    <div class="flex items-center gap-2">
-                        <button id="workbench-export-btn" onclick="triggerExportScriptScene()" class="hidden px-3 py-1.5 bg-gray-800 border border-white/10 rounded hover:bg-white hover:text-black transition-colors text-[10px] font-bold font-mono uppercase flex items-center gap-2">
-                            <i data-lucide="download" class="w-3 h-3"></i> 导出脚本
-                        </button>
-                        <button id="workbench-export-game-btn" onclick="triggerExportGameJS()" class="hidden px-3 py-1.5 bg-gray-800 border border-white/10 rounded hover:bg-white hover:text-black transition-colors text-[10px] font-bold font-mono uppercase flex items-center gap-2">
-                            <i data-lucide="download" class="w-3 h-3"></i> 导出 game.js
-                        </button>
-                        <button id="workbench-run-btn" class="hidden px-3 py-1.5 bg-capcut-green text-black text-[10px] font-bold font-mono rounded hover:shadow-[0_0_15px_rgba(0,202,224,0.4)] transition-all">▶ 运行 / RUN</button>
-                        <button id="workbench-close-btn" class="w-8 h-8 flex items-center justify-center text-gray-400 hover:text-white transition-colors">✕</button>
-                    </div>
-                </div>
-
-                <!-- Monaco Editor Container -->
-                <div id="workbench-monaco" class="flex-1 bg-[#1e1e1e]"></div>
-
-                <!-- AI Copilot (Mock UI for consistency) -->
-                <div class="h-[35%] border-t border-white/10 flex flex-col bg-black/40">
-                    <div class="px-4 py-2 border-b border-white/5 text-[10px] font-mono text-gray-500 tracking-widest bg-white/5">
-                        AI 编程助手 / COPILOT
-                    </div>
-                    <div class="flex-1 p-4 overflow-y-auto font-sans text-xs text-gray-300 space-y-3">
-                        <div class="text-gray-500 font-mono text-[10px]">> 系统: 当前为只读模式</div>
-                        <div>如需编辑和运行此 Demo，请将其迁移至 <span class="text-capcut-green">UnifiedRenderer</span> 框架；如需导出脚本，请使用“导出脚本”。</div>
-                    </div>
-                    <div class="p-3 border-t border-white/5 bg-white/5">
-                        <input id="workbench-chat-input" type="text" disabled placeholder="AI 辅助编程 - 待打通" class="w-full bg-black/20 border border-white/10 rounded px-3 py-2 text-xs text-gray-500 cursor-not-allowed">
-                    </div>
-                </div>
+                <div id="lab-ui-top-right" class="absolute top-3 right-3 z-10 flex items-center gap-2"></div>
             </div>
 
             <!-- Control Panel (Left on Desktop, Bottom on Mobile) -->
-            <aside id="lab-left-panel" class="w-full md:w-80 h-[35vh] md:h-full border-t md:border-t-0 md:border-r border-white/10 bg-white/[0.02] backdrop-blur-sm p-4 md:p-6 flex flex-col gap-4 md:gap-8 z-20 overflow-y-auto custom-scrollbar flex-shrink-0" data-lenis-prevent>
-                <div>
-                    <!-- Original/Copy Status Indicator -->
-                    <div class="mb-6 flex items-center justify-between">
-                        <div class="flex gap-2 text-[10px] font-mono font-bold uppercase border border-white/10 px-3 py-1.5 rounded-full bg-white/5 backdrop-blur-md">
-                            <span id="lab-status-original" class="text-capcut-green">原创</span>
-                            <span class="text-gray-600 opacity-30">/</span>
-                            <span id="lab-status-copy" class="text-gray-600">搬运</span>
-                        </div>
-                        <div class="text-[10px] text-gray-500 font-mono tracking-wider flex items-center gap-2">
-                            <span class="w-1.5 h-1.5 rounded-full bg-green-500 animate-pulse"></span>
-                            VERIFIED_SOURCE
-                        </div>
+            <aside id="lab-left-panel" class="w-full md:w-80 h-[35vh] md:h-full border-t md:border-t-0 md:border-r border-white/10 bg-white/[0.02] backdrop-blur-sm flex flex-col z-20 flex-shrink-0" data-lenis-prevent>
+                <div id="ai-chat-zone" class="flex-1 flex flex-col border-b border-white/10 min-h-0">
+                    <div class="px-4 py-2 border-b border-white/5 text-[10px] font-mono text-gray-500 tracking-widest bg-white/5 flex items-center justify-between">
+                        <span>AI 助手 / COPILOT</span>
+                        <span id="ai-status" class="text-capcut-green">● IDLE</span>
                     </div>
-
-
-
-                    <!-- MANUAL PANEL -->
-                    <div id="manual-panel">
-                        <div class="flex items-center justify-between mb-6">
-                            <h3 class="text-capcut-green font-mono text-xs uppercase tracking-widest">控制台 // CONSOLE</h3>
-                            <button onclick="resetDemo()" class="px-2 py-1 text-[9px] font-mono uppercase border border-white/20 rounded hover:bg-white hover:text-black transition-colors opacity-70 hover:opacity-100">RESET</button>
-                        </div>
-                        
-                        <!-- Dynamic Controls Container -->
-                        <div id="dynamic-controls" class="space-y-5">
-                            <!-- Controls will be injected here by JS -->
-                        </div>
+                    <div id="ai-chat-history" class="flex-1 p-4 overflow-y-auto font-sans text-xs text-gray-300 space-y-3">
+                        <div class="text-gray-500 font-mono text-[10px]">> 输入效果描述开始创作</div>
                     </div>
-
-
-                </div>
-
-                <!-- Input & Actions -->
-                <div class="space-y-4 pt-4 border-t border-white/10">
-                    <!-- Canvas Aspect Ratio Selector -->
-                    <div class="space-y-2">
-                        <div class="flex justify-between text-[10px] text-gray-400 font-mono uppercase">
-                            <span>画布比例 / ASPECT RATIO</span>
-                        </div>
+                    <div class="p-3 border-t border-white/5 bg-white/5">
                         <div class="flex gap-2">
-                            <select id="aspect-select" class="flex-1 bg-gray-800 text-white text-xs font-mono p-2 rounded border border-white/10 outline-none focus:border-capcut-green">
-                                <option value="16:9">16:9 (Landscape)</option>
-                                <option value="9:16">9:16 (Portrait)</option>
-                                <option value="1:1">1:1 (Square)</option>
-                                <option value="4:3">4:3 (Classic)</option>
-                                <option value="3:4">3:4 (Portrait)</option>
-                                <option value="full">Full Screen</option>
-                            </select>
+                            <input id="ai-chat-input" type="text" placeholder="描述你想要的效果..." class="flex-1 bg-black/20 border border-white/10 rounded px-3 py-2 text-xs text-white outline-none focus:border-capcut-green">
+                            <button onclick="sendAIChat()" class="px-3 py-2 bg-capcut-green text-black text-[10px] font-bold font-mono rounded hover:shadow-[0_0_15px_rgba(0,202,224,0.4)] transition-all">发送</button>
                         </div>
-                    </div>
-
-                    <!-- Source Selector -->
-                    <div class="space-y-2">
-                        <div class="flex justify-between text-[10px] text-gray-400 font-mono uppercase">
-                            <span>输入源 / SOURCE</span>
-                        </div>
-                        <div class="flex gap-2">
-                            <select id="source-select" class="flex-1 bg-gray-800 text-white text-xs font-mono p-2 rounded border border-white/10 outline-none focus:border-capcut-green">
-                                <option value="default">Default</option>
-                            </select>
-                            <label class="cursor-pointer bg-gray-800 text-white p-2 rounded border border-white/10 hover:bg-white/10 flex items-center justify-center w-8" title="Upload File">
-                                <input type="file" id="file-upload" accept="image/*,video/*" class="hidden">
-                                <i data-lucide="upload" class="w-3 h-3"></i>
-                            </label>
-                        </div>
-                    </div>
-
-                    <div class="grid grid-cols-2 gap-2">
-                        <button onclick="triggerSaveImage()" class="flex items-center justify-center gap-2 py-2 bg-gray-800 border border-white/10 rounded hover:bg-white hover:text-black transition-colors text-xs font-mono uppercase">
-                            <i data-lucide="camera" class="w-3 h-3"></i> 截图
-                        </button>
-                        <button id="rec-btn" onclick="toggleRecording()" class="flex items-center justify-center gap-2 py-2 bg-gray-800 border border-white/10 rounded hover:bg-red-500 hover:text-white transition-colors text-xs font-mono uppercase">
-                            <i data-lucide="video" class="w-3 h-3"></i> <span id="rec-text">录制</span>
-                        </button>
-                    </div>
-                    <div class="hidden grid grid-cols-2 gap-2">
-                        <button onclick="triggerExportScriptScene()" class="flex items-center justify-center gap-2 py-2 bg-gray-800 border border-white/10 rounded hover:bg-white hover:text-black transition-colors text-xs font-mono uppercase">
-                            <i data-lucide="download" class="w-3 h-3"></i> 导出脚本
-                        </button>
-                        <button onclick="triggerExportGameJS()" class="flex items-center justify-center gap-2 py-2 bg-gray-800 border border-white/10 rounded hover:bg-white hover:text-black transition-colors text-xs font-mono uppercase">
-                            <i data-lucide="download" class="w-3 h-3"></i> 导出 game.js
-                        </button>
-                    </div>
-                
-                </div>
-
-                <!-- Other Experiments List -->
-                <div class="mt-4 pt-4 border-t border-white/10">
-                    <h3 class="text-gray-500 font-mono text-[10px] uppercase tracking-widest mb-4">切换实验 / SWITCH</h3>
-                    <div class="space-y-2">
-                    <div class="space-y-2">
-                        <button onclick="openLab('my-motion-portfolio/public/demos/demo_particle_standard.html', '标准粒子', 'Particle System V1')" class="w-full text-left px-3 py-2 text-[10px] text-gray-400 font-mono uppercase hover:text-white hover:bg-white/5 transition-colors rounded flex items-center justify-between group">
-                            <span>020. 标准粒子 (Color Rule)</span>
-                            <span class="opacity-0 group-hover:opacity-100 text-teal-400">→</span>
-                        </button>
-                        <button onclick="openLab('my-motion-portfolio/public/demos/demo4.html', '圣诞照片墙', 'Christmas Photo Wall')" class="w-full text-left px-3 py-2 text-[10px] text-gray-400 font-mono uppercase hover:text-white hover:bg-white/5 transition-colors rounded flex items-center justify-between group">
-                            <span>001. 圣诞照片墙</span>
-                            <span class="opacity-0 group-hover:opacity-100 text-green-400">→</span>
-                        </button>
-                        <button onclick="openLab('my-motion-portfolio/public/demos/demo8.html', '动能粒子', 'Kinetic Physics')" class="w-full text-left px-3 py-2 text-[10px] text-gray-400 font-mono uppercase hover:text-white hover:bg-white/5 transition-colors rounded flex items-center justify-between group">
-                            <span>002. 动能粒子</span>
-                            <span class="opacity-0 group-hover:opacity-100 text-orange-400">→</span>
-                        </button>
-                        <button onclick="openLab('my-motion-portfolio/public/demos/demo5.html', '姿态识别', 'Pose Estimation')" class="w-full text-left px-3 py-2 text-[10px] text-gray-400 font-mono uppercase hover:text-white hover:bg-white/5 transition-colors rounded flex items-center justify-between group">
-                            <span>003. 姿态识别</span>
-                            <span class="opacity-0 group-hover:opacity-100 text-cyan-400">→</span>
-                        </button>
-                        <button onclick="openLab('my-motion-portfolio/public/demos/demo11.html', '结合生长', 'Combined Growth')" class="w-full text-left px-3 py-2 text-[10px] text-gray-400 font-mono uppercase hover:text-white hover:bg-white/5 transition-colors rounded flex items-center justify-between group">
-                            <span>004. 结合生长</span>
-                            <span class="opacity-0 group-hover:opacity-100 text-red-400">→</span>
-                        </button>
-                        <button onclick="openLab('my-motion-portfolio/public/demos/demo9.html', '深度视差', 'AI Depth')" class="w-full text-left px-3 py-2 text-[10px] text-gray-400 font-mono uppercase hover:text-white hover:bg-white/5 transition-colors rounded flex items-center justify-between group">
-                            <span>005. 深度视差</span>
-                            <span class="opacity-0 group-hover:opacity-100 text-purple-400">→</span>
-                        </button>
-                        <button onclick="openLab('my-motion-portfolio/public/demos/demo10.html', '动态追踪', 'Motion Track')" class="w-full text-left px-3 py-2 text-[10px] text-gray-400 font-mono uppercase hover:text-white hover:bg-white/5 transition-colors rounded flex items-center justify-between group">
-                            <span>006. 动态追踪</span>
-                            <span class="opacity-0 group-hover:opacity-100 text-yellow-400">→</span>
-                        </button>
-                        <button onclick="openLab('my-motion-portfolio/public/demos/demo11.html', '植物手绘', 'Plant Sketch')" class="w-full text-left px-3 py-2 text-[10px] text-gray-400 font-mono uppercase hover:text-white hover:bg-white/5 transition-colors rounded flex items-center justify-between group">
-                            <span>007. 植物手绘</span>
-                            <span class="opacity-0 group-hover:opacity-100 text-green-500">→</span>
-                        </button>
-                        <button onclick="openLab('my-motion-portfolio/public/demos/demo14.html', '文字烟花', 'Text Fireworks')" class="w-full text-left px-3 py-2 text-[10px] text-gray-400 font-mono uppercase hover:text-white hover:bg-white/5 transition-colors rounded flex items-center justify-between group">
-                            <span>008. 文字烟花</span>
-                            <span class="opacity-0 group-hover:opacity-100 text-yellow-500">→</span>
-                        </button>
-                        <button onclick="openLab('my-motion-portfolio/public/demos/demo7.html', '赛博人脸', 'Face Mesh')" class="w-full text-left px-3 py-2 text-[10px] text-gray-400 font-mono uppercase hover:text-white hover:bg-white/5 transition-colors rounded flex items-center justify-between group">
-                            <span>010. 赛博人脸</span>
-                            <span class="opacity-0 group-hover:opacity-100 text-red-400">→</span>
-                        </button>
-                        <button onclick="openLab('my-motion-portfolio/public/demos/demo17.html', '矩阵解构', 'Matrix Deconstruction')" class="w-full text-left px-3 py-2 text-[10px] text-gray-400 font-mono uppercase hover:text-white hover:bg-white/5 transition-colors rounded flex items-center justify-between group">
-                            <span>017. 矩阵解构</span>
-                            <span class="opacity-0 group-hover:opacity-100 text-green-500">→</span>
-                        </button>
-                        <button onclick="openLab('my-motion-portfolio/public/demos/demo18.html', '指尖粒子', 'Finger Particles')" class="w-full text-left px-3 py-2 text-[10px] text-gray-400 font-mono uppercase hover:text-white hover:bg-white/5 transition-colors rounded flex items-center justify-between group">
-                            <span>018. 指尖粒子</span>
-                            <span class="opacity-0 group-hover:opacity-100 text-pink-500">→</span>
-                        </button>
-                        <button onclick="openLab('my-motion-portfolio/public/demos/demo19.html', '福气飘飘', 'Fortune Snow')" class="w-full text-left px-3 py-2 text-[10px] text-gray-400 font-mono uppercase hover:text-white hover:bg-white/5 transition-colors rounded flex items-center justify-between group">
-                            <span>019. 福气飘飘</span>
-                            <span class="opacity-0 group-hover:opacity-100 text-red-500">→</span>
-                        </button>
-                        <button onclick="openLab('my-motion-portfolio/public/demos/demo20.html', '拼贴风景', 'Picture Cut Landscape')" class="w-full text-left px-3 py-2 text-[10px] text-gray-400 font-mono uppercase hover:text-white hover:bg-white/5 transition-colors rounded flex items-center justify-between group">
-                            <span>020. 拼贴风景</span>
-                            <span class="opacity-0 group-hover:opacity-100 text-blue-400">→</span>
-                        </button>
-                        <button onclick="openLab('my-motion-portfolio/public/demos/demo21.html', '手势网格', 'Gesture Grid')" class="w-full text-left px-3 py-2 text-[10px] text-gray-400 font-mono uppercase hover:text-white hover:bg-white/5 transition-colors rounded flex items-center justify-between group">
-                            <span>021. 手势网格</span>
-                            <span class="opacity-0 group-hover:opacity-100 text-indigo-400">→</span>
-                        </button>
-                        <button onclick="openLab('my-motion-portfolio/public/demos/demo22.html', 'Voronoi音频', 'Voronoi Audio')" class="w-full text-left px-3 py-2 text-[10px] text-gray-400 font-mono uppercase hover:text-white hover:bg-white/5 transition-colors rounded flex items-center justify-between group">
-                            <span>022. Voronoi音频</span>
-                            <span class="opacity-0 group-hover:opacity-100 text-yellow-400">→</span>
-                        </button>
-                        <button onclick="openLab('my-motion-portfolio/public/demos/demo23.html', '霓虹力场', 'Neon Flow')" class="w-full text-left px-3 py-2 text-[10px] text-gray-400 font-mono uppercase hover:text-white hover:bg-white/5 transition-colors rounded flex items-center justify-between group">
-                            <span>023. 霓虹力场</span>
-                            <span class="opacity-0 group-hover:opacity-100 text-cyan-400">→</span>
-                        </button>
-                        <button onclick="openLab('my-motion-portfolio/public/demos/demo24.html', '粒子星系', 'Particle Galaxy')" class="w-full text-left px-3 py-2 text-[10px] text-gray-400 font-mono uppercase hover:text-white hover:bg-white/5 transition-colors rounded flex items-center justify-between group">
-                            <span>024. 粒子星系</span>
-                            <span class="opacity-0 group-hover:opacity-100 text-indigo-400">→</span>
-                        </button>
-                        <button onclick="openLab('my-motion-portfolio/public/demos/demo25.html', '液态置换', 'Liquid Displacement')" class="w-full text-left px-3 py-2 text-[10px] text-gray-400 font-mono uppercase hover:text-white hover:bg-white/5 transition-colors rounded flex items-center justify-between group">
-                            <span>025. 液态置换</span>
-                            <span class="opacity-0 group-hover:opacity-100 text-blue-500">→</span>
-                        </button>
                     </div>
                 </div>
 
-                <div class="mt-auto">
-                    <div class="border border-white/10 p-4 rounded bg-black/50">
-                        <h4 class="text-[10px] text-gray-500 font-mono uppercase mb-2">系统状态 / STATUS</h4>
-                        <div class="flex items-center gap-2 text-xs text-white">
-                            <div class="w-1.5 h-1.5 bg-green-500 rounded-full"></div>
-                            <span>运行中 / RUNNING</span>
-                        </div>
-                        <div class="mt-2 text-[10px] text-gray-600 font-mono">
-                            GPU: 42%<br>
-                            MEM: 128MB
-                        </div>
+                <div id="control-zone" class="flex-1 overflow-y-auto p-4 md:p-6 min-h-0 custom-scrollbar">
+                    <div class="flex items-center justify-between mb-4">
+                        <h3 class="text-capcut-green font-mono text-xs uppercase tracking-widest">控制台 // CONSOLE</h3>
+                        <button onclick="resetDemo()" class="px-2 py-1 text-[9px] font-mono uppercase border border-white/20 rounded hover:bg-white hover:text-black transition-colors opacity-70 hover:opacity-100">RESET</button>
                     </div>
-                    
-                    
+                    <div id="dynamic-controls" class="space-y-5"></div>
+                </div>
+
+                <div id="action-bar" class="flex-shrink-0 border-t border-white/10 p-3 space-y-2">
+                    <input type="file" id="file-upload" accept="image/*,video/*" class="hidden">
+                    <div class="flex gap-2">
+                        <select id="aspect-select" class="flex-1 bg-gray-800 text-white text-[10px] font-mono p-2 rounded border border-white/10 outline-none focus:border-capcut-green">
+                            <option value="16:9">16:9</option>
+                            <option value="9:16">9:16</option>
+                            <option value="1:1">1:1</option>
+                            <option value="full" selected>Full</option>
+                        </select>
+                        <select id="source-select" class="flex-1 bg-gray-800 text-white text-[10px] font-mono p-2 rounded border border-white/10 outline-none focus:border-capcut-green">
+                            <option value="default">Default</option>
+                        </select>
+                    </div>
+                    <div class="flex gap-2">
+                        <button onclick="triggerSaveImage()" class="flex-1 px-2 py-1.5 bg-white/5 hover:bg-white/10 text-white text-[10px] font-mono rounded border border-white/10 transition-all">📷 截图</button>
+                        <button onclick="toggleRecording()" class="flex-1 px-2 py-1.5 bg-white/5 hover:bg-white/10 text-white text-[10px] font-mono rounded border border-white/10 transition-all" id="rec-btn"><span id="rec-text">🔴 录制</span></button>
+                        <button onclick="triggerExportGameJS()" class="flex-1 px-2 py-1.5 bg-white/5 hover:bg-white/10 text-white text-[10px] font-mono rounded border border-white/10 transition-all">⬇ game.js</button>
+                        <button onclick="openExportSettings()" class="px-2 py-1.5 bg-white/5 hover:bg-white/10 text-white text-[10px] font-mono rounded border border-white/10 transition-all">⚙ 前缀</button>
+                    </div>
                 </div>
             </aside>
         </div>

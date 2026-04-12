@@ -50,8 +50,50 @@ function extractFirstJsonObjectString(text) {
   return s.slice(start).trim();
 }
 
+function sanitizeJsonLikeNumberLiterals(text) {
+  const s = typeof text === 'string' ? text : '';
+  let out = '';
+  let inString = false;
+  let escape = false;
+
+  for (let i = 0; i < s.length; i += 1) {
+    const ch = s[i];
+    if (inString) {
+      out += ch;
+      if (escape) {
+        escape = false;
+      } else if (ch === '\\') {
+        escape = true;
+      } else if (ch === '"') {
+        inString = false;
+      }
+      continue;
+    }
+
+    if (ch === '"') {
+      inString = true;
+      out += ch;
+      continue;
+    }
+
+    if (
+      ch === '.' &&
+      i > 0 &&
+      /[0-9]/.test(s[i - 1]) &&
+      (i + 1 >= s.length || /[\s,\]}]/.test(s[i + 1]))
+    ) {
+      out += '.0';
+      continue;
+    }
+
+    out += ch;
+  }
+
+  return out;
+}
+
 function parseBlueprintResponse(raw) {
-  const parsed = JSON.parse(extractFirstJsonObjectString(raw));
+  const parsed = JSON.parse(sanitizeJsonLikeNumberLiterals(extractFirstJsonObjectString(raw)));
   return {
     title: typeof parsed.title === 'string' ? parsed.title : 'Generated Effect',
     summary: typeof parsed.summary === 'string' ? parsed.summary : '',
@@ -150,6 +192,7 @@ module.exports = {
   buildCodeMessages,
   defaultBlueprint,
   parseBlueprintResponse,
+  sanitizeJsonLikeNumberLiterals,
   stripMarkdownCodeFence,
   extractFirstJsonObjectString
 };

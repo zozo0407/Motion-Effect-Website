@@ -33,6 +33,7 @@
             toggleRecording,
         } from './site/lab.js';
         import { initAIChat, sendAIChat } from './site/ai-chat.js';
+        import { resetAutoHeal } from './site/lab-autoheal.js';
         import {
             initWizard,
             openWizard,

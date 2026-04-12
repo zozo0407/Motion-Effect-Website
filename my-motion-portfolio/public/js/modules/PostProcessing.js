@@ -2,6 +2,9 @@
  * PostProcessing.js
  * A plug-and-play module for adding post-processing effects to UnifiedRenderer.
  * Currently supports: Bloom (UnrealBloomPass)
+ *
+ * @deprecated Phase 2: 请使用 UnifiedRenderer 的 addBloom() / addGlitch() 等 API 替代。
+ * 此文件将在 Phase 3 中移除。
  */
 
 import * as THREE from 'three';

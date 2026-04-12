@@ -130,5 +130,18 @@
         "color": "text-green-500",
         "isOriginal": false,
         "icon": "<text x=\"100\" y=\"120\" text-anchor=\"middle\" fill=\"currentColor\" font-size=\"60\" font-family=\"monospace\">TXT</text><line x1=\"40\" y1=\"80\" x2=\"160\" y2=\"80\" stroke=\"currentColor\" stroke-width=\"2\"/>"
+    },
+    {
+        "id": "032",
+        "title": "VFX 引擎测试",
+        "keywords": "vfx_test",
+        "enTitle": "VFX Engine Test",
+        "tech": "Three.js / PostProcessing",
+        "category": "画面",
+        "subcategory": "3D特效",
+        "url": "my-motion-portfolio/public/demos/test-vfx.html",
+        "color": "text-cyan-400",
+        "isOriginal": true,
+        "icon": "<circle cx=\"100\" cy=\"100\" r=\"40\" stroke=\"currentColor\" fill=\"none\" stroke-width=\"2\"/><circle cx=\"100\" cy=\"100\" r=\"20\" fill=\"currentColor\" opacity=\"0.3\"/><line x1=\"60\" y1=\"100\" x2=\"140\" y2=\"100\" stroke=\"currentColor\" stroke-width=\"1\" opacity=\"0.5\"/>"
     }
 ]

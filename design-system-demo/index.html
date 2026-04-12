@@ -1,0 +1,304 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Minimal Design System Demo</title>
+    
+    <!-- Fonts: Inter (Closest to Geist without downloading) & JetBrains Mono -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500&family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
+    
+    <!-- Tailwind & Icons -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://unpkg.com/lucide@latest"></script>
+    
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    fontFamily: {
+                        sans: ['Inter', 'system-ui', 'sans-serif'],
+                        mono: ['JetBrains Mono', 'monospace'],
+                    },
+                    colors: {
+                        base: '#000000',
+                        surface: '#0A0A0A',
+                        panel: '#111111',
+                        border: 'rgba(255, 255, 255, 0.1)',
+                        borderHover: 'rgba(255, 255, 255, 0.2)',
+                        textMain: '#FFFFFF',
+                        textMuted: '#A1A1AA',
+                    }
+                }
+            }
+        }
+    </script>
+    
+    <style>
+        /* Theme Variables */
+        :root {
+            --color-base: #000000;
+            --color-surface: #0A0A0A;
+            --color-panel: #111111;
+            --color-border: rgba(255, 255, 255, 0.1);
+            --color-border-hover: rgba(255, 255, 255, 0.2);
+            --color-border-focus: #FFFFFF;
+            --color-text-main: #FFFFFF;
+            --color-text-muted: #A1A1AA;
+            --color-text-inverse: #000000;
+            --color-bg-inverse: #FFFFFF;
+            --color-bg-inverse-hover: #E5E7EB; /* gray-200 */
+        }
+
+        :root[data-theme="light"] {
+            --color-base: #FFFFFF;
+            --color-surface: #F4F4F5; /* zinc-100 */
+            --color-panel: #FAFAFA; /* zinc-50 */
+            --color-border: rgba(0, 0, 0, 0.1);
+            --color-border-hover: rgba(0, 0, 0, 0.2);
+            --color-border-focus: #000000;
+            --color-text-main: #000000;
+            --color-text-muted: #71717A; /* zinc-500 */
+            --color-text-inverse: #FFFFFF;
+            --color-bg-inverse: #000000;
+            --color-bg-inverse-hover: #27272A; /* zinc-800 */
+        }
+
+        /* Base Reset */
+        body { 
+            background-color: var(--color-base); 
+            color: var(--color-text-main); 
+            -webkit-font-smoothing: antialiased;
+            -moz-osx-font-smoothing: grayscale;
+            transition: background-color 0.3s ease, color 0.3s ease;
+        }
+        
+        ::selection { background: var(--color-border-hover); color: var(--color-text-main); }
+
+        /* Vercel-style Shadow Borders */
+        .shadow-border {
+            box-shadow: 0 0 0 1px var(--color-border);
+        }
+        .shadow-border-hover:hover {
+            box-shadow: 0 0 0 1px var(--color-border-hover);
+        }
+        .shadow-border-focus:focus-within {
+            box-shadow: 0 0 0 1px var(--color-border-focus);
+        }
+        
+        /* Semantic Colors Mapping */
+        .bg-base { background-color: var(--color-base); }
+        .bg-surface { background-color: var(--color-surface); }
+        .bg-panel { background-color: var(--color-panel); }
+        .bg-inverse { background-color: var(--color-bg-inverse); }
+        .hover\:bg-inverse-hover:hover { background-color: var(--color-bg-inverse-hover); }
+        
+        .text-main { color: var(--color-text-main); }
+        .text-muted { color: var(--color-text-muted); }
+        .text-inverse { color: var(--color-text-inverse); }
+
+        /* Typography Utilities */
+        .tracking-tightest { letter-spacing: -0.04em; }
+
+        /* Custom Inputs */
+        input[type="range"] {
+            -webkit-appearance: none; width: 100%; background: transparent;
+        }
+        input[type="range"]::-webkit-slider-runnable-track {
+            height: 2px; background: var(--color-border); border-radius: 1px;
+        }
+        input[type="range"]::-webkit-slider-thumb {
+            -webkit-appearance: none; height: 12px; width: 12px; border-radius: 50%;
+            background: var(--color-text-main); margin-top: -5px; cursor: pointer;
+            transition: transform 0.15s ease;
+        }
+        input[type="range"]:hover::-webkit-slider-thumb { transform: scale(1.1); }
+        
+        /* Hide scrollbar for clean look */
+        ::-webkit-scrollbar { width: 0px; background: transparent; }
+        
+        /* Theme Toggle Button */
+        .theme-toggle {
+            position: fixed;
+            top: 2rem;
+            right: 2rem;
+            width: 2.5rem;
+            height: 2.5rem;
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            cursor: pointer;
+            z-index: 50;
+            background: var(--color-surface);
+            color: var(--color-text-main);
+            transition: all 0.2s ease;
+        }
+        .theme-toggle:hover {
+            background: var(--color-panel);
+            transform: scale(1.05);
+        }
+        
+        /* Transition classes for smooth theme switching on elements */
+        .theme-transition {
+            transition: background-color 0.3s ease, border-color 0.3s ease, color 0.3s ease, box-shadow 0.3s ease;
+        }
+    </style>
+</head>
+<body class="min-h-screen flex flex-col items-center justify-center p-8">
+
+    <!-- Theme Toggle -->
+    <button id="theme-toggle-btn" class="theme-toggle shadow-border shadow-border-hover theme-transition" aria-label="Toggle theme">
+        <i data-lucide="sun" id="icon-sun" class="w-4 h-4 hidden"></i>
+        <i data-lucide="moon" id="icon-moon" class="w-4 h-4"></i>
+    </button>
+
+    <!-- Container -->
+    <div class="w-full max-w-4xl flex flex-col gap-16">
+        
+        <!-- Header (Runway/Vercel Vibe) -->
+        <header class="space-y-4">
+            <h1 class="text-5xl md:text-7xl font-semibold tracking-tightest leading-[1.0] text-main theme-transition">
+                Motion Lab.
+            </h1>
+            <p class="text-muted text-sm md:text-base max-w-lg leading-relaxed theme-transition">
+                A minimalist, engineering-focused design system. Zero glow, zero blur, maximum precision.
+            </p>
+        </header>
+
+        <!-- Components Grid -->
+        <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+            
+            <!-- Panel 1: Actions -->
+            <div class="bg-surface rounded-xl p-8 shadow-border flex flex-col gap-8 theme-transition">
+                <div>
+                    <h2 class="text-sm font-medium text-main mb-6 theme-transition">Actions</h2>
+                    <div class="flex flex-wrap gap-3">
+                        <!-- Primary Button -->
+                        <button class="bg-inverse text-inverse px-4 py-2 rounded-md text-sm font-medium hover:bg-inverse-hover transition-colors duration-150 flex items-center gap-2 theme-transition">
+                            <i data-lucide="play" class="w-4 h-4 fill-current"></i>
+                            Generate
+                        </button>
+                        <!-- Secondary Button -->
+                        <button class="bg-transparent text-main px-4 py-2 rounded-md text-sm font-medium shadow-border shadow-border-hover hover:bg-panel transition-all duration-150 theme-transition">
+                            Settings
+                        </button>
+                    </div>
+                </div>
+
+                <div>
+                    <h2 class="text-sm font-medium text-main mb-6 theme-transition">Inputs</h2>
+                    <div class="space-y-5">
+                        <!-- Text Input -->
+                        <div class="relative bg-base rounded-md shadow-border shadow-border-focus transition-shadow duration-150 overflow-hidden theme-transition">
+                            <input type="text" placeholder="Enter prompt..." class="w-full bg-transparent px-3 py-2 text-sm text-main placeholder:text-muted outline-none theme-transition">
+                            <div class="absolute right-2 top-1/2 -translate-y-1/2 px-1.5 py-0.5 rounded bg-surface shadow-border text-[10px] text-muted font-mono theme-transition">⌘K</div>
+                        </div>
+                        
+                        <!-- Slider -->
+                        <div class="space-y-3 pt-2">
+                            <div class="flex justify-between items-center text-xs text-muted theme-transition">
+                                <span>Intensity</span>
+                                <span class="font-mono">0.85</span>
+                            </div>
+                            <input type="range" value="85" class="w-full">
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Panel 2: Content Cards -->
+            <div class="flex flex-col gap-4">
+                
+                <!-- Card 1 -->
+                <div class="bg-surface rounded-xl p-5 shadow-border hover:bg-panel transition-colors duration-200 cursor-pointer group flex items-start gap-4 theme-transition">
+                    <div class="w-8 h-8 rounded-md shadow-border flex items-center justify-center bg-base shrink-0 group-hover:shadow-border-hover transition-shadow theme-transition">
+                        <i data-lucide="box" class="w-4 h-4 text-muted group-hover:text-main transition-colors theme-transition"></i>
+                    </div>
+                    <div>
+                        <div class="flex items-center gap-2 mb-1">
+                            <h3 class="text-sm font-medium text-main theme-transition">Zero Shadow Precision</h3>
+                            <span class="px-1.5 py-0.5 rounded-sm bg-panel shadow-border text-[10px] text-muted font-mono uppercase tracking-wider theme-transition">Experimental</span>
+                        </div>
+                        <p class="text-sm text-muted leading-relaxed theme-transition">
+                            Borders are rendered using 1px box-shadows. No large drop shadows or glassmorphism.
+                        </p>
+                    </div>
+                </div>
+
+                <!-- Card 2 -->
+                <div class="bg-surface rounded-xl p-5 shadow-border hover:bg-panel transition-colors duration-200 cursor-pointer group flex items-start gap-4 theme-transition">
+                    <div class="w-8 h-8 rounded-md shadow-border flex items-center justify-center bg-base shrink-0 group-hover:shadow-border-hover transition-shadow theme-transition">
+                        <i data-lucide="type" class="w-4 h-4 text-muted group-hover:text-main transition-colors theme-transition"></i>
+                    </div>
+                    <div>
+                        <h3 class="text-sm font-medium text-main mb-1 theme-transition">Typographic Hierarchy</h3>
+                        <p class="text-sm text-muted leading-relaxed theme-transition">
+                            Rely on font weight, size, and color contrast rather than background colors to establish visual order.
+                        </p>
+                    </div>
+                </div>
+
+                <!-- Data Table / List -->
+                <div class="bg-surface rounded-xl shadow-border overflow-hidden mt-2 theme-transition">
+                    <div class="px-4 py-3 border-b border-[var(--color-border)] text-xs font-medium text-muted uppercase tracking-wider theme-transition">
+                        Recent Generations
+                    </div>
+                    <div class="divide-y divide-[var(--color-border)]">
+                        <div class="px-4 py-3 flex justify-between items-center hover:bg-panel transition-colors theme-transition">
+                            <span class="text-sm text-main theme-transition">Particle_System_V2</span>
+                            <span class="text-xs text-muted font-mono theme-transition">2m ago</span>
+                        </div>
+                        <div class="px-4 py-3 flex justify-between items-center hover:bg-panel transition-colors theme-transition">
+                            <span class="text-sm text-main theme-transition">Fluid_Dynamics_Test</span>
+                            <span class="text-xs text-muted font-mono theme-transition">15m ago</span>
+                        </div>
+                    </div>
+                </div>
+
+            </div>
+        </div>
+        
+        <footer class="pt-8 border-t border-[var(--color-border)] flex justify-between items-center text-xs text-muted font-mono theme-transition">
+            <span>SYSTEM.READY</span>
+            <span>V 2.1.0</span>
+        </footer>
+
+    </div>
+
+    <script>
+        lucide.createIcons();
+        
+        // Theme Toggle Logic
+        const themeToggleBtn = document.getElementById('theme-toggle-btn');
+        const iconSun = document.getElementById('icon-sun');
+        const iconMoon = document.getElementById('icon-moon');
+        const htmlElement = document.documentElement;
+        
+        // Check system preference on load
+        if (window.matchMedia && window.matchMedia('(prefers-color-scheme: light)').matches) {
+            htmlElement.setAttribute('data-theme', 'light');
+            iconMoon.classList.add('hidden');
+            iconSun.classList.remove('hidden');
+        }
+        
+        themeToggleBtn.addEventListener('click', () => {
+            const currentTheme = htmlElement.getAttribute('data-theme');
+            
+            if (currentTheme === 'light') {
+                // Switch to Dark
+                htmlElement.removeAttribute('data-theme');
+                iconSun.classList.add('hidden');
+                iconMoon.classList.remove('hidden');
+            } else {
+                // Switch to Light
+                htmlElement.setAttribute('data-theme', 'light');
+                iconMoon.classList.add('hidden');
+                iconSun.classList.remove('hidden');
+            }
+        });
+    </script>
+</body>
+</html>

@@ -2,10 +2,10 @@ const fs = require('fs');
 const path = require('path');
 const assert = require('assert');
 
-const serverPath = path.join(__dirname, '..', '..', 'server.js');
-const server = fs.readFileSync(serverPath, 'utf8');
+const validator = fs.readFileSync(path.join(__dirname, '..', '..', 'server', 'services', 'code-validator.js'), 'utf8');
 
-assert(server.includes('SpotLightHelper'), 'server.js should mention SpotLightHelper in validation or repair rules');
-assert(server.includes('Helper'), 'server.js should include a general Helper ban for stability');
+assert(validator.includes('SpotLightHelper'), 'code-validator.js should mention SpotLightHelper in validation or repair rules');
+assert(validator.includes('Helper'), 'code-validator.js should include a general Helper ban for stability');
 
 console.log('ban-three-helpers.test.cjs passed');
+

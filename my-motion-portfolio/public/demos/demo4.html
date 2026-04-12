@@ -82,8 +82,16 @@
             const data = event.data;
             if (!data) return;
 
-            if (data.type === 'HANDSHAKE') sendConfig();
-            if (data.type === 'REQUEST_GAME_JS_SOURCE') {
+            const payload = data.payload && typeof data.payload === 'object' ? data.payload : data;
+            const messageType = data.type;
+            const messageKey = payload.key ?? data.key ?? payload.bind ?? data.bind;
+            const messageValue = payload.value ?? data.value;
+            const messageSource = payload.source ?? data.source;
+            const messageFiles = payload.files ?? data.files;
+            const messageBind = payload.bind ?? data.bind;
+
+            if (messageType === 'HANDSHAKE') sendConfig();
+            if (messageType === 'REQUEST_GAME_JS_SOURCE') {
                 fetch(window.location.href, { cache: 'no-store' })
                     .then((r) => r.text())
                     .then((html) => {
@@ -96,42 +104,42 @@
                     });
             }
 
-            if (data.type === 'UPDATE_PARAM') {
-                if (data.key === 'uSpeed') {
+            if (messageType === 'UPDATE_PARAM') {
+                if (messageKey === 'uSpeed') {
                     // Map 0-1 to 0.005-0.02
                     // Formula: min + val * (max - min)
                     // 0.005 + val * 0.015
-                    scriptScene.rotationSpeed = 0.005 + data.value * 0.015;
+                    scriptScene.rotationSpeed = 0.005 + messageValue * 0.015;
                 }
-                if (data.key === 'uParticles') {
+                if (messageKey === 'uParticles') {
                     // Debounce rebuild or handle carefully
                     // For now, let's just update config, rebuild is expensive
                     if (scriptScene.sceneObjects && scriptScene.sceneObjects.cfg) {
                          // Only rebuild if value changed significantly
-                         if(scriptScene.sceneObjects.cfg.needlesCount !== data.value) {
-                            scriptScene.sceneObjects.cfg.needlesCount = data.value;
-                            scriptScene.sceneObjects.cfg.spheresCount = Math.floor(data.value * 0.18);
-                            scriptScene.sceneObjects.cfg.trisCount = Math.floor(data.value * 0.13);
-                            scriptScene.sceneObjects.cfg.blocksCount = Math.floor(data.value * 0.13);
+                         if(scriptScene.sceneObjects.cfg.needlesCount !== messageValue) {
+                            scriptScene.sceneObjects.cfg.needlesCount = messageValue;
+                            scriptScene.sceneObjects.cfg.spheresCount = Math.floor(messageValue * 0.18);
+                            scriptScene.sceneObjects.cfg.trisCount = Math.floor(messageValue * 0.13);
+                            scriptScene.sceneObjects.cfg.blocksCount = Math.floor(messageValue * 0.13);
                             scriptScene.rebuildScene();
                          }
                     }
                 }
-                if (data.key === 'uDuration') {
-                    scriptScene.transitionDuration = data.value * 1000;
+                if (messageKey === 'uDuration') {
+                    scriptScene.transitionDuration = messageValue * 1000;
                 }
-                if (data.key === 'cmd_aggregate') {
+                if (messageKey === 'cmd_aggregate') {
                     scriptScene.tweenProgress(1);
                 }
-                if (data.key === 'cmd_disperse') {
+                if (messageKey === 'cmd_disperse') {
                     scriptScene.tweenProgress(0);
                 }
             }
             
-            if (data.type === 'LOAD_SOURCE') {
+            if (messageType === 'LOAD_SOURCE') {
                 // Legacy handler for single file if needed, or remove if unused
                 // We keep it for compatibility if index.html global upload is used
-                const src = data.source;
+                const src = messageSource;
                 if (src.type === 'image') {
                     const loader = new THREE.TextureLoader();
                     loader.load(src.path, (tex) => {
@@ -143,9 +151,9 @@
                 }
             }
 
-            if (data.type === 'FILE_UPLOAD' && data.bind === 'uImages') {
+            if (messageType === 'FILE_UPLOAD' && messageBind === 'uImages') {
                 const loader = new THREE.TextureLoader();
-                const promises = data.files.map(f => new Promise(resolve => {
+                const promises = messageFiles.map(f => new Promise(resolve => {
                     loader.load(f.url, (tex) => {
                         tex.colorSpace = THREE.SRGBColorSpace;
                         tex.needsUpdate = true;
@@ -161,9 +169,9 @@
                 });
             }
 
-            if (data.type === 'START_REC') scriptScene.startRecording();
-            if (data.type === 'STOP_REC') scriptScene.stopRecording();
-            if (data.type === 'SAVE_IMAGE') scriptScene.saveImage(); // Added Screenshot Support
+            if (messageType === 'START_REC') scriptScene.startRecording();
+            if (messageType === 'STOP_REC') scriptScene.stopRecording();
+            if (messageType === 'SAVE_IMAGE') scriptScene.saveImage(); // Added Screenshot Support
         });
 
         // ... [Rest of initialization] ...
@@ -320,7 +328,7 @@
                 this.composer.addPass(this.renderPass);
 
                 const resolution = new THREE.Vector2(window.innerWidth, window.innerHeight);
-                const bloom = new UnrealBloomPass(resolution, 1.0, 0.6, 0.85);
+                const bloom = new UnrealBloomPass(resolution, 0.5, 0.3, 0.85);
                 this.bloomPass = bloom;
                 this.composer.addPass(bloom);
             }
@@ -629,7 +637,7 @@
                     emissive: new THREE.Color('#0c4c36'),
                     metalness: 0.15,
                     roughness: 0.75,
-                    emissiveIntensity: 0.6,
+                    emissiveIntensity: 0.3,
                     transparent: true,
                     opacity: 1
                 });
@@ -638,7 +646,7 @@
                     emissive: new THREE.Color('#FEDC56'),
                     metalness: 1.0,
                     roughness: 0.25,
-                    emissiveIntensity: 0.25,
+                    emissiveIntensity: 0.125,
                     transparent: true,
                     opacity: 1
                 });
@@ -647,7 +655,7 @@
                     emissive: new THREE.Color('#FEDC56'),
                     metalness: 1.0,
                     roughness: 0.3,
-                    emissiveIntensity: 0.2,
+                    emissiveIntensity: 0.1,
                     transparent: true,
                     opacity: 1,
                     side: THREE.DoubleSide
@@ -970,7 +978,7 @@
                 const starMat = new THREE.MeshStandardMaterial({
                     color: new THREE.Color('#FEDC56'),
                     emissive: new THREE.Color('#FEDC56'),
-                    emissiveIntensity: 1.35,
+                    emissiveIntensity: 0.675,
                     metalness: 0.2,
                     roughness: 0.4,
                     transparent: true,
@@ -1024,7 +1032,7 @@
                     const neonMat = new THREE.MeshStandardMaterial({
                         color: new THREE.Color('#FFD54F'),
                         emissive: new THREE.Color('#FFD54F'),
-                        emissiveIntensity: 0.45,
+                        emissiveIntensity: 0.225,
                         metalness: 0.25,
                         roughness: 0.55
                     });
@@ -1102,24 +1110,22 @@
                 if (so.blocksLightGreenMesh) applyGroup(so.blocksLightGreenMesh, so.blocksLightGreen, true);
                 if (so.smallStarsMesh) applyGroup(so.smallStarsMesh, so.smallStars);
                 if (so.photos && so.photos.meshes) applyMeshes(so.photos.meshes, so.photos, true, 0.0, true);
+                this.updateTransitionFx(progress);
+            }
+
+            updateTransitionFx(progress) {
+                if (!this.bloomPass) return;
+                const clamped = THREE.MathUtils.clamp(progress, 0, 1);
+                this.bloomPass.strength = 0.25 + (1.0 - clamped) * 0.25;
+                this.bloomPass.radius = 0.15 + (1.0 - clamped) * 0.15;
             }
 
             tweenProgress(target) {
                 if (!this.sceneObjects) return;
-                // Stop existing tween if any
                 if (this.sceneObjects.tweens.length > 0) {
-                     this.sceneObjects.tweens.forEach(t => t.stop());
-                     this.sceneObjects.tweens = [];
+                    this.sceneObjects.tweens.forEach(t => t.stop && t.stop());
+                    this.sceneObjects.tweens = [];
                 }
-
-                // If target is 1 (Aggregate), star should be higher (offset 0)
-                // If target is 0 (Disperse), star should be lower (offset -3)
-                // We tween star offset along with progress
-                
-                // Keep float animation running separately?
-                // The current implementation clears ALL tweens, including float.
-                // We should re-init float tween or separate tween lists.
-                // For simplicity, let's just animate the offset in the same tween.
 
                 const start = { 
                     p: this.sceneObjects.progress,
@@ -1127,29 +1133,49 @@
                 };
                 
                 const targetStarY = (target === 1) ? 0 : -3;
+                const duration = Math.max(16, this.transitionDuration || 1000);
+                const easeInOutCubic = (t) =>
+                    t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2;
 
-                const tween = new this.TWEEN.Tween(start)
-                    .to({ p: target, starY: targetStarY }, this.transitionDuration)
-                    .easing(this.TWEEN.Easing.Cubic.InOut)
-                    .onUpdate(() => {
-                        this.sceneObjects.progress = start.p;
-                        this.updateInstancedMatrices(start.p);
-                        
-                        // Update star position
-                        if (this.sceneObjects.starMesh) {
-                             this.sceneObjects.starExplodeOffset = start.starY;
-                             // We need to maintain floatY if we want it to keep floating
-                             // Since we cleared tweens, float is gone. We should re-add float tween if we want.
-                             // But let's just focus on position for now.
-                             this.sceneObjects.starMesh.position.y = (this.sceneObjects.starBaseY || 0) + start.starY + (this.sceneObjects.starFloatY || 0);
-                        }
-                    })
-                    .onComplete(() => {
-                         // Restart float tween after transition if needed
-                         this.startFloatTween();
-                    });
-                tween.start();
+                let rafId = null;
+                const startTime = performance.now();
+                const step = (now) => {
+                    const raw = Math.min(1, (now - startTime) / duration);
+                    const eased = easeInOutCubic(raw);
+                    const nextProgress = start.p + (target - start.p) * eased;
+                    const nextStarY = start.starY + (targetStarY - start.starY) * eased;
+
+                    this.sceneObjects.progress = nextProgress;
+                    if (this.sceneObjects.cfg) this.sceneObjects.cfg.progress = nextProgress;
+                    this.sceneObjects.starExplodeOffset = nextStarY;
+                    this.updateInstancedMatrices(nextProgress);
+
+                    if (this.sceneObjects.starMesh) {
+                        this.sceneObjects.starMesh.position.y =
+                            (this.sceneObjects.starBaseY || 0) +
+                            nextStarY +
+                            (this.sceneObjects.starFloatY || 0);
+                    }
+
+                    if (raw < 1) {
+                        rafId = requestAnimationFrame(step);
+                        return;
+                    }
+
+                    this.sceneObjects.progress = target;
+                    if (this.sceneObjects.cfg) this.sceneObjects.cfg.progress = target;
+                    this.sceneObjects.starExplodeOffset = targetStarY;
+                    this.updateInstancedMatrices(target);
+                    this.startFloatTween();
+                };
+
+                const tween = {
+                    stop: () => {
+                        if (rafId !== null) cancelAnimationFrame(rafId);
+                    },
+                };
                 this.sceneObjects.tweens.push(tween);
+                rafId = requestAnimationFrame(step);
             }
             
             startFloatTween() {

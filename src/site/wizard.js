@@ -3,11 +3,12 @@ let injectedPrependDemo = null;
 let injectedGenerateAIHTML = null;
 let injectedGenerateTemplateHTML = null;
 
-// Always use same-origin API in production; platforms like Render do not expose :3000 publicly.
 const API_BASE = '/api';
 
 let currentTemplate = null;
 let scriptSceneAutoIndex = 1;
+
+import { updateSession } from './session-store.js';
 
 // Tracks the currently running AI generation so we can cancel it when user closes the console.
 // This prevents late responses from a previous run from mutating UI after the user re-opens.
@@ -487,7 +488,27 @@ export async function generateDemo() {
             if (!injectedGenerateAIHTML) throw new Error('generateAIHTML 未初始化');
 
             htmlContent = injectedGenerateAIHTML(json.code);
+            updateSession({
+              lastGeneratedPrompt: data.prompt || '',
+              lastGeneratedCode: json.code,
+              autoHealRetryCount: 0,
+              autoHealActive: false
+            });
             finishProgress();
+
+            if (json.degraded) {
+              const reason = json.degradedReason || 'AI 生成的代码不符合规范';
+              setTimeout(() => {
+                const shell = document.getElementById('lab-shell');
+                if (shell) {
+                  const notice = document.createElement('div');
+                  notice.className = 'fixed top-4 right-4 z-50 bg-orange-900/90 border border-orange-500/50 rounded-lg p-3 text-xs text-orange-300 max-w-xs shadow-lg';
+                  notice.innerHTML = `<div class="font-bold text-orange-400 mb-1">⚠ AI 生成质量不佳</div><div class="text-[11px]">已暂时显示默认效果</div><div class="text-[10px] text-orange-400/60 mt-1">${reason}</div>`;
+                  document.body.appendChild(notice);
+                  setTimeout(() => { if (notice.parentNode) notice.parentNode.removeChild(notice); }, 8000);
+                }
+              }, 500);
+            }
         } catch (e) {
             const isAbort = e && (e.name === 'AbortError' || /aborted/i.test(String(e.message || '')));
             const errorReason = isAbort ? '生成超时，网络可能拥堵' : (e && e.message ? e.message : String(e));
