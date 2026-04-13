@@ -194,9 +194,13 @@ module.exports = function (app, services) {
                 return res.json(budgetExceededPayload('before generation'));
             }
             let generatedCode = await aiProvider.runWithProviderFallback(providers, async (provider) => {
+                const budgetMs = Math.max(1000, Math.min(90000, remainingBudgetMs() - 1500));
+                // When remaining budget is very small (e.g. after a provider timeout + repair attempts),
+                // calling another provider is very likely to time out again and just wastes budget.
+                if (budgetMs < 12000) throw new Error(`budget too low: ${budgetMs}ms`);
                 return aiGenerator.generateEffectV2FromPrompt(prompt, provider.apiKey, provider.baseUrl, provider.model, {
                     outputMode: process.env.AI_V2_OUTPUT_MODE,
-                    codeTimeoutMs: Math.max(1000, Math.min(90000, remainingBudgetMs() - 1500))
+                    codeTimeoutMs: budgetMs
                 });
             });
             generatedCode = codeAutofix.autoFixEngineEffectCode(generatedCode);

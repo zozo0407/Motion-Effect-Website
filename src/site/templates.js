@@ -405,6 +405,85 @@
 </head>
 <body>
     <script type="module">
+ import * as THREE from 'three';
+ import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';
+ import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
+ import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
+
+ // Compatibility polyfill: some AI outputs assume renderer.addBloom() exists (UnifiedRenderer API).
+ // We implement it on THREE.WebGLRenderer and transparently switch renderer.render() to composer.render().
+ (function installRendererAddBloom() {
+   const proto = THREE && THREE.WebGLRenderer && THREE.WebGLRenderer.prototype;
+   if (!proto || proto.addBloom) return;
+
+   proto.addBloom = function addBloom(options = {}) {
+     const cfg = {
+       strength: options.strength ?? 1.2,
+       radius: options.radius ?? 0.5,
+       threshold: options.threshold ?? 0.2,
+     };
+     this.__cc_bloom = cfg;
+
+     if (!this.__cc_renderPatched) {
+       this.__cc_renderPatched = true;
+       const originalRender = this.render.bind(this);
+       this.__cc_originalRender = originalRender;
+
+       this.render = (scene, camera) => {
+        // EffectComposer internally calls renderer.render(); without this guard we'd recurse forever and freeze the page.
+        if (this.__cc_inComposerRender) return originalRender(scene, camera);
+
+         const bloomCfg = this.__cc_bloom;
+         if (!bloomCfg) return originalRender(scene, camera);
+
+         try {
+           if (!this.__cc_composer) {
+             this.__cc_composer = new EffectComposer(this);
+             this.__cc_renderPass = new RenderPass(scene, camera);
+             this.__cc_composer.addPass(this.__cc_renderPass);
+
+             const size = new THREE.Vector2();
+             this.getSize(size);
+             this.__cc_bloomPass = new UnrealBloomPass(
+               new THREE.Vector2(size.x, size.y),
+               bloomCfg.strength,
+               bloomCfg.radius,
+               bloomCfg.threshold
+             );
+             this.__cc_composer.addPass(this.__cc_bloomPass);
+           } else {
+             // Keep references fresh in case user swaps scene/camera.
+             this.__cc_renderPass.scene = scene;
+             this.__cc_renderPass.camera = camera;
+
+             const size = new THREE.Vector2();
+             this.getSize(size);
+             this.__cc_composer.setSize(size.x, size.y);
+             // UnrealBloomPass reads resolution uniform internally; setSize exists in newer three versions.
+             if (this.__cc_bloomPass && typeof this.__cc_bloomPass.setSize === 'function') {
+               this.__cc_bloomPass.setSize(size.x, size.y);
+             }
+             this.__cc_bloomPass.strength = bloomCfg.strength;
+             this.__cc_bloomPass.radius = bloomCfg.radius;
+             this.__cc_bloomPass.threshold = bloomCfg.threshold;
+           }
+          this.__cc_inComposerRender = true;
+          try {
+            this.__cc_composer.render();
+          } finally {
+            this.__cc_inComposerRender = false;
+          }
+         } catch (_) {
+           // If postprocessing fails for any reason, fall back to direct render.
+           return originalRender(scene, camera);
+         }
+       };
+     }
+
+     return this;
+   };
+ })();
+
  const __source = ${jsonLiteral};
  const __blob = new Blob([__source], { type: 'application/javascript' });
  const __url = URL.createObjectURL(__blob);
@@ -542,6 +621,11 @@
    window.addEventListener('beforeunload', () => {
      try { cancelAnimationFrame(__raf); } catch (_) {}
      try { if (typeof __effect.onDestroy === 'function') __effect.onDestroy(); } catch (_) {}
+     // Best-effort cleanup for postprocessing resources if user used renderer.addBloom().
+     try {
+         const r = __effect && (__effect.renderer || __effect._renderer);
+         if (r && r.__cc_composer && typeof r.__cc_composer.dispose === 'function') r.__cc_composer.dispose();
+     } catch (_) {}
      try { URL.revokeObjectURL(__url); } catch (_) {}
  });
     <\/script>

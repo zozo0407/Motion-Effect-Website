@@ -64,29 +64,24 @@ const templates = {
 };
 
 const AI_RANDOM_PROMPTS = [
-    "紫色发光粒子漩涡，中心脉冲，带轻微雾感。",
-    "绿色霓虹线框立方体，缓慢旋转，黑色背景。",
-    "金色液态金属球，表面水波纹起伏，高光反射。",
-    "粉蓝色相间的莫比乌斯环，匀速自转，无背景。",
-    "一圈漂浮的白色发光方块，像呼吸一样上下浮动。",
-    "红色的数字雨数据流，从上往下掉落，赛博朋克风。",
-    "透明玻璃质感的二十面体，折射出内部的蓝色点光源。",
-    "发光的DNA双螺旋结构，青色和洋红色，缓慢旋转。",
-    "纯黑背景下的白色线条声波，随时间节奏跳动。",
-    "不断变色的发光光环，形成一条无限延伸的隧道。",
-    "低多边形网格地面，发着紫光，像海浪一样起伏。",
-    "一颗悬浮的哑光黑色球体，顶部打柔和白光，有阴影。",
-    "蓝色的全息投影地球仪，由点阵组成，缓慢自转。",
-    "不断聚拢又散开的橙色火花粒子，像营火一样。",
-    "复古8-bit风格的红色像素爱心，中心跳动，带泛光。"
+    "一个金属质感的球体，使用 MeshStandardMaterial（高金属度、低粗糙度），缓慢自转。两盏不同色温的点光源从对角照射，在曲面上产生流动的高光，背景纯黑。",
+    "一组发光的线条（使用 LineSegments），呈现深紫与电蓝的渐变色，缓慢旋转。使用自发光材质 (emissive)，背景纯黑。",
+    "一个半透明的发光晶体（使用 MeshPhysicalMaterial 的 transmission 属性），缓慢自转。内部透出柔和的青色光晕，配合一盏点光源从侧面照射，背景纯黑。",
+    "一个漆黑的球体，周围环绕着一圈缓慢旋转的发光粒子环（使用 Points），粒子带有紫红渐变色。",
+    "深色背景下，一个低多边形平面 (PlaneGeometry) 展现平滑的水面波纹效果，顶点随正弦波起伏。使用 MeshStandardMaterial 配合一盏暖橙色点光源从上方照射，营造静谧氛围。",
+    "两个发光的圆环 (Torus)，一个散发青色光晕，一个散发洋红色光晕，以不同速度和轴向交错旋转。使用自发光材质 (emissive)，带 Bloom 泛光。",
+    "数百个微小的发光球体（使用 Points 或小球体 Mesh），在纯黑空间中沿缓慢的曲线轨迹漂浮游动。使用自发光材质 (emissive) 呈现柔和的蓝绿色光晕，带 Bloom 泛光。",
+    "一个线框模式 (Wireframe) 的二十面体，缓慢匀速旋转，发出锐利的赛博绿光。使用自发光材质 (emissive)，带 Bloom 泛光。",
+    "一个完全纯黑的圆盘遮挡住后方强烈的白色点光源，四周溢出夺目的日冕光晕（Bloom）。随着光源微小的位移，光斑在边缘游走。",
+    "一排围绕成圆形的垂直发光柱体（使用 CylinderGeometry），高度随正弦波函数平滑起伏，颜色在青到洋红之间渐变，缓慢旋转。使用自发光材质 (emissive)。"
 ];
 
 const AI_ENHANCEMENTS = [
-    "，整体采用极简克制的设计风格，背景纯黑，突出主体的高级感。",
+    "，请确保代码结构极致精简，仅使用 Three.js 内置材质和几何体实现，避免复杂的自定义 Shader。",
+    "，整体采用极简克制的设计风格，背景纯黑，突出主体的高级感和光影对比。",
     "，请为材质加入线框模式（wireframe）和自发光属性，增强科幻感。",
-    "，增加柔和的光影对比与物理材质（PBR），让质感更加真实细腻。",
-    "，让摄像机保持缓慢推近或环绕的动态效果，增强沉浸体验。",
-    "，颜色采用赛博朋克经典的霓虹粉与青色搭配，充满未来感。"
+    "，增加柔和的灯光系统（环境光+点光源），让物理材质（PBR）的质感更加真实细腻。",
+    "，颜色采用赛博朋克经典的霓虹粉与青色搭配，充满未来感，并确保对象正确加入 scene。"
 ];
 
 export function initWizard({ openLab, prependDemo, generateAIHTML, generateTemplateHTML }) {
@@ -202,17 +197,22 @@ export function selectTemplate(type) {
     if (!container) return;
 
     if (type === 'ai-custom') {
-        const promptField = (config.fields || []).find(f => f.id === 'prompt') || (config.fields || [])[0] || { value: '' };
+        const randomPrompt = AI_RANDOM_PROMPTS[Math.floor(Math.random() * AI_RANDOM_PROMPTS.length)];
+        const promptField = (config.fields || []).find(f => f.id === 'prompt') || (config.fields || [])[0] || { value: randomPrompt };
+        // 动态覆盖默认的硬编码 value
+        const initialValue = promptField.value === '一个赛博朋克风格的旋转立方体，带有霓虹灯光效，背景是流动的数字雨' ? randomPrompt : promptField.value;
+
         container.innerHTML = `
             <div class="space-y-4 h-full flex flex-col">
                 <div class="flex justify-between items-center">
                     <div class="text-sm text-gray-400 font-mono uppercase tracking-wider">Prompt / 描述词</div>
                 </div>
-                <textarea id="input-prompt" class="w-full flex-1 bg-gray-800 text-white text-lg font-mono p-6 rounded-xl border border-white/10 outline-none focus:border-capcut-green resize-none transition-all leading-relaxed" placeholder="描述你想要的特效：主体、材质、运动、背景、配色…">${promptField.value || ''}</textarea>
+                <textarea id="input-prompt" class="w-full flex-1 bg-gray-800 text-white text-lg font-mono p-6 rounded-xl border border-white/10 outline-none focus:border-capcut-green resize-none transition-all leading-relaxed" placeholder="描述你想要的特效：主体、材质、运动、背景、配色…">${initialValue}</textarea>
                 
                 <div class="flex justify-between items-center pt-2">
                     <div class="text-xs text-gray-500 font-mono">
-                        示例：赛博朋克风旋转立方体，霓虹边缘发光...
+                        <i data-lucide="info" class="w-3 h-3 inline-block mr-1 opacity-60"></i>
+                        支持中英文，描述越具体（颜色/材质/运动），效果越好
                     </div>
                     <div class="flex items-center gap-4">
                         <span id="char-count" class="text-xs text-gray-600 font-mono">0 chars</span>

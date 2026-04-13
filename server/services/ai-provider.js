@@ -74,7 +74,10 @@ async function runWithProviderFallback(providers, runner) {
 async function runV2Stage({ stage, url, apiKey, model, messages, temperature, maxTokens, timeoutMs }) {
     const startedAt = Date.now();
     const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(new Error(`${stage} timeout`)), timeoutMs);
+    // NOTE: abort(reason) propagates inconsistently across Node/fetch implementations
+    // (sometimes yields message "This operation was aborted", sometimes the reason string,
+    // and sometimes a non-AbortError). Use bare abort() and normalize in catch.
+    const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
     console.log(`[v2][${stage}] start`);
     try {
         const res = await fetchWithRetry(url, {
@@ -89,7 +92,11 @@ async function runV2Stage({ stage, url, apiKey, model, messages, temperature, ma
     } catch (e) {
         const elapsedMs = Date.now() - startedAt;
         const message = String((e && e.message) || e || 'unknown error');
-        if (e && e.name === 'AbortError') {
+        const isAbort =
+            (e && e.name === 'AbortError') ||
+            /aborted/i.test(message) ||
+            /operation was aborted/i.test(message);
+        if (isAbort) {
             console.error(`[v2][${stage}] timeout elapsedMs=${elapsedMs} timeoutMs=${timeoutMs}`);
             throw new Error(`V2 ${stage} stage timeout after ${timeoutMs}ms`);
         }

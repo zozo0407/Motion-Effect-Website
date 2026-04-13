@@ -34,6 +34,7 @@
         } from './site/lab.js';
         import { initAIChat, sendAIChat } from './site/ai-chat.js';
         import { resetAutoHeal } from './site/lab-autoheal.js';
+        import { runAutoTest, getTestStatus, getTestCases } from './site/test-runner.js';
         import {
             initWizard,
             openWizard,
@@ -93,6 +94,9 @@
         window.handleDrop = handleDrop;
         window.selectSearchResult = selectSearchResultFactory({ openLab });
         window.sendAIChat = () => sendAIChat({ updateDemoParam });
+        window.runAutoTest = runAutoTest;
+        window.getTestStatus = getTestStatus;
+        window.getTestCases = getTestCases;
 
         // --- Init ---
         // Initialize immediately to avoid missing the load event in module scripts

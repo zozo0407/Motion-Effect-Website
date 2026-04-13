@@ -11,8 +11,18 @@ const {
 } = require('../../tools/creator/effect-blueprint.cjs');
 const { shouldUseBlueprintStage } = require('../../tools/creator/generation-config.cjs');
 const { wrapAsEngineEffect, parseAIOutput } = require('../../tools/creator/v2-wrapped-parts.cjs');
+const { optimizePrompt } = require('./prompt-optimizer');
 
-async function generateEffectV2FromPrompt(prompt, apiKey, baseUrl, model, options = {}) {
+async function generateEffectV2FromPrompt(rawPrompt, apiKey, baseUrl, model, options = {}) {
+    const { optimized: prompt, changes, complexityScore } = optimizePrompt(rawPrompt);
+    if (changes.length > 0) {
+        console.log(`[prompt-optimizer] complexity=${complexityScore} changes=${changes.length}`);
+        changes.forEach((c, i) => {
+            console.log(`  [${i + 1}] "${c.original}" → "${c.replacement}" (${c.reason})`);
+        });
+    } else {
+        console.log(`[prompt-optimizer] complexity=${complexityScore} no changes needed`);
+    }
     const outputMode = String(options.outputMode || '').trim();
     const read = (f) => {
         try {
@@ -85,7 +95,8 @@ async function generateEffectV2FromPrompt(prompt, apiKey, baseUrl, model, option
                 const n = typeof raw === 'string' && raw.trim() ? Number(raw) : 0.25;
                 return Number.isFinite(n) ? Math.max(0, Math.min(1, n)) : 0.25;
             })(),
-            maxTokens: 4096,
+            // Keep output small and reduce slow generations; setup+animate is expected <= 120 lines.
+            maxTokens: 2048,
             timeoutMs: codeTimeoutMs
         });
 
@@ -138,7 +149,8 @@ async function generateEffectV2FromPrompt(prompt, apiKey, baseUrl, model, option
                 '---END---',
             ].join('\n');
 
-            const retryTimeout = Math.max(5000, Math.min(20000, Math.floor(codeTimeoutMs / 3)));
+            // Reformat is cheap, but provider latency can exceed 20s occasionally. Give it a bit more headroom.
+            const retryTimeout = Math.max(8000, Math.min(30000, Math.floor(codeTimeoutMs / 3)));
             const retryRes = await runV2Stage({
                 stage: 'parts_reformat',
                 url,
@@ -149,7 +161,7 @@ async function generateEffectV2FromPrompt(prompt, apiKey, baseUrl, model, option
                     { role: 'user', content: reformatUser }
                 ],
                 temperature: 0.0,
-                maxTokens: 4096,
+                maxTokens: 2048,
                 timeoutMs: retryTimeout
             });
 
